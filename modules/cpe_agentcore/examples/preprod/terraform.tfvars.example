@@ -1,0 +1,158 @@
+# ==============================================================================
+# PREPROD ENVIRONMENT CONFIGURATION
+# ==============================================================================
+
+environment    = "preprod"
+aws_region     = "us-east-1"
+aws_account_id = "222222222222"
+
+# ==============================================================================
+# VPC CONFIGURATION (Created externally)
+# ==============================================================================
+vpc_config = {
+  vpc_id = "vpc-preprod12345"
+
+  private_subnet_ids = {
+    "us-east-1a" = {
+      subnet_id         = "subnet-preprod-private-1a"
+      availability_zone = "us-east-1a"
+      cidr_block        = "10.1.1.0/24"
+    }
+    "us-east-1b" = {
+      subnet_id         = "subnet-preprod-private-1b"
+      availability_zone = "us-east-1b"
+      cidr_block        = "10.1.2.0/24"
+    }
+    "us-east-1c" = {
+      subnet_id         = "subnet-preprod-private-1c"
+      availability_zone = "us-east-1c"
+      cidr_block        = "10.1.3.0/24"
+    }
+  }
+
+  public_subnet_ids = {
+    "us-east-1a" = "subnet-preprod-public-1a"
+    "us-east-1b" = "subnet-preprod-public-1b"
+    "us-east-1c" = "subnet-preprod-public-1c"
+  }
+
+  security_group_ids = {
+    agentcore_runtime  = "sg-preprod-runtime"
+    vpc_endpoints      = "sg-preprod-vpce"
+    nat_gateway_egress = "sg-preprod-nat"
+  }
+
+  route_table_ids = {
+    "us-east-1a" = "rtb-preprod-private-1a"
+    "us-east-1b" = "rtb-preprod-private-1b"
+    "us-east-1c" = "rtb-preprod-private-1c"
+  }
+}
+
+# ==============================================================================
+# SCALE PROFILE - Preprod (Production-like)
+# ==============================================================================
+scale_profile = {
+  # Network - production-like HA configuration
+  nat_mode              = "per_az"
+  vpc_endpoint_az_count = 2
+
+  # Runtime - production-like capacity, slightly lower limits
+  runtime_concurrency_limit = 100
+  runtime_memory_mb         = 2048
+  runtime_timeout_seconds   = 300
+
+  # Observability - production-like retention
+  log_retention_days         = 180
+  metrics_resolution_seconds = 60
+  alarm_evaluation_periods   = 3
+
+  # Tool execution - production-like limits
+  tool_execution_timeout_seconds = 60
+  tool_max_concurrent_executions = 20
+
+  # Feature flags - match production (conservative)
+  enable_gateway = false
+  enable_memory  = false
+}
+
+# ==============================================================================
+# AGENT DEFINITIONS
+# ==============================================================================
+agents = {
+  "customer-support" = {
+    name        = "Customer Support Agent"
+    description = "Handles customer inquiries and support requests"
+
+    runtime_version_digest = "sha256:a1b2c3d4e5f6789012345678901234567890abcdef1234567890abcdef123456"
+
+    capability_bundles = [
+      "baseline",
+      "dynamodb_readonly",
+      "bedrock_invoke_model"
+    ]
+
+    additional_tags = {
+      Team = "customer-experience"
+    }
+  }
+
+  "data-analyst" = {
+    name        = "Data Analyst Agent"
+    description = "Analyzes data and generates reports"
+
+    runtime_version_digest = "sha256:b2c3d4e5f67890123456789012345678901abcdef1234567890abcdef1234567"
+
+    capability_bundles = [
+      "baseline",
+      "s3_readwrite",
+      "dynamodb_readonly",
+      "bedrock_invoke_model"
+    ]
+
+    memory_mb_override = 2048
+
+    additional_tags = {
+      Team = "data-engineering"
+    }
+  }
+}
+
+# ==============================================================================
+# CROSS-ACCOUNT ACCESS (Enabled for testing)
+# ==============================================================================
+cross_account_access = {
+  enabled = true
+  allowed_caller_accounts = [
+    "444444444444" # Test application account
+  ]
+  allowed_caller_roles = {
+    "444444444444" = [
+      "arn:aws:iam::444444444444:role/test-app-role"
+    ]
+  }
+  allowed_caller_vpc_ids = [
+    "vpc-caller-test"
+  ]
+}
+
+# ==============================================================================
+# OBSERVABILITY
+# ==============================================================================
+observability_config = {
+  splunk_hec_endpoint         = "https://splunk-hec.bank.internal:8088"
+  splunk_hec_token_secret_arn = "arn:aws:secretsmanager:us-east-1:222222222222:secret:agentcore/splunk-hec-token"
+  alarm_sns_topic_arn         = "arn:aws:sns:us-east-1:222222222222:agentcore-preprod-alarms"
+  enable_xray_tracing         = true
+  dashboard_enabled           = true
+}
+
+# ==============================================================================
+# TAGS
+# ==============================================================================
+tags = {
+  CostCenter  = "platform-engineering"
+  Application = "agentcore"
+  Owner       = "platform-team"
+}
+

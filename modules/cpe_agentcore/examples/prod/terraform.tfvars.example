@@ -1,0 +1,164 @@
+# ==============================================================================
+# PROD ENVIRONMENT CONFIGURATION
+# ==============================================================================
+
+environment    = "prod"
+aws_region     = "us-east-1"
+aws_account_id = "333333333333"
+
+# ==============================================================================
+# VPC CONFIGURATION (Created externally)
+# ==============================================================================
+vpc_config = {
+  vpc_id = "vpc-prod12345"
+
+  private_subnet_ids = {
+    "us-east-1a" = {
+      subnet_id         = "subnet-prod-private-1a"
+      availability_zone = "us-east-1a"
+      cidr_block        = "10.2.1.0/24"
+    }
+    "us-east-1b" = {
+      subnet_id         = "subnet-prod-private-1b"
+      availability_zone = "us-east-1b"
+      cidr_block        = "10.2.2.0/24"
+    }
+    "us-east-1c" = {
+      subnet_id         = "subnet-prod-private-1c"
+      availability_zone = "us-east-1c"
+      cidr_block        = "10.2.3.0/24"
+    }
+  }
+
+  public_subnet_ids = {
+    "us-east-1a" = "subnet-prod-public-1a"
+    "us-east-1b" = "subnet-prod-public-1b"
+    "us-east-1c" = "subnet-prod-public-1c"
+  }
+
+  security_group_ids = {
+    agentcore_runtime  = "sg-prod-runtime"
+    vpc_endpoints      = "sg-prod-vpce"
+    nat_gateway_egress = "sg-prod-nat"
+  }
+
+  route_table_ids = {
+    "us-east-1a" = "rtb-prod-private-1a"
+    "us-east-1b" = "rtb-prod-private-1b"
+    "us-east-1c" = "rtb-prod-private-1c"
+  }
+}
+
+# ==============================================================================
+# SCALE PROFILE - Prod (Full capacity, full HA)
+# ==============================================================================
+scale_profile = {
+  # Network - full HA, all AZs
+  nat_mode              = "per_az"
+  vpc_endpoint_az_count = 3
+
+  # Runtime - full production capacity
+  runtime_concurrency_limit = 1000
+  runtime_memory_mb         = 4096
+  runtime_timeout_seconds   = 300
+
+  # Observability - full audit retention (regulatory requirement)
+  log_retention_days         = 365
+  metrics_resolution_seconds = 1  # High resolution metrics
+  alarm_evaluation_periods   = 5
+
+  # Tool execution - production limits
+  tool_execution_timeout_seconds = 120
+  tool_max_concurrent_executions = 50
+
+  # Feature flags - conservative, only enable after thorough testing
+  enable_gateway = false
+  enable_memory  = false
+}
+
+# ==============================================================================
+# AGENT DEFINITIONS
+# ==============================================================================
+agents = {
+  "customer-support" = {
+    name        = "Customer Support Agent"
+    description = "Handles customer inquiries and support requests"
+
+    runtime_version_digest = "sha256:a1b2c3d4e5f6789012345678901234567890abcdef1234567890abcdef123456"
+
+    capability_bundles = [
+      "baseline",
+      "dynamodb_readonly",
+      "bedrock_invoke_model"
+    ]
+
+    additional_tags = {
+      Team = "customer-experience"
+    }
+  }
+
+  "data-analyst" = {
+    name        = "Data Analyst Agent"
+    description = "Analyzes data and generates reports"
+
+    runtime_version_digest = "sha256:b2c3d4e5f67890123456789012345678901abcdef1234567890abcdef1234567"
+
+    capability_bundles = [
+      "baseline",
+      "s3_readwrite",
+      "dynamodb_readonly",
+      "bedrock_invoke_model"
+    ]
+
+    memory_mb_override = 4096
+
+    additional_tags = {
+      Team = "data-engineering"
+    }
+  }
+}
+
+# ==============================================================================
+# CROSS-ACCOUNT ACCESS (Enabled for production callers)
+# ==============================================================================
+cross_account_access = {
+  enabled = true
+  allowed_caller_accounts = [
+    "555555555555", # Production application account A
+    "666666666666"  # Production application account B
+  ]
+  allowed_caller_roles = {
+    "555555555555" = [
+      "arn:aws:iam::555555555555:role/app-a-service-role"
+    ]
+    "666666666666" = [
+      "arn:aws:iam::666666666666:role/app-b-service-role"
+    ]
+  }
+  allowed_caller_vpc_ids = [
+    "vpc-caller-prod-a",
+    "vpc-caller-prod-b"
+  ]
+}
+
+# ==============================================================================
+# OBSERVABILITY
+# ==============================================================================
+observability_config = {
+  splunk_hec_endpoint         = "https://splunk-hec.bank.internal:8088"
+  splunk_hec_token_secret_arn = "arn:aws:secretsmanager:us-east-1:333333333333:secret:agentcore/splunk-hec-token"
+  alarm_sns_topic_arn         = "arn:aws:sns:us-east-1:333333333333:agentcore-prod-alarms"
+  enable_xray_tracing         = true
+  dashboard_enabled           = true
+}
+
+# ==============================================================================
+# TAGS
+# ==============================================================================
+tags = {
+  CostCenter  = "platform-engineering"
+  Application = "agentcore"
+  Owner       = "platform-team"
+  Compliance  = "sox-pci"
+}
+

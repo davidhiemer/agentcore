@@ -1,0 +1,150 @@
+# ==============================================================================
+# DEV ENVIRONMENT CONFIGURATION
+# ==============================================================================
+
+environment    = "dev"
+aws_region     = "us-east-1"
+aws_account_id = "111111111111"
+
+# ==============================================================================
+# VPC CONFIGURATION (Created externally)
+# ==============================================================================
+vpc_config = {
+  vpc_id = "vpc-dev12345"
+
+  private_subnet_ids = {
+    "us-east-1a" = {
+      subnet_id         = "subnet-dev-private-1a"
+      availability_zone = "us-east-1a"
+      cidr_block        = "10.0.1.0/24"
+    }
+    "us-east-1b" = {
+      subnet_id         = "subnet-dev-private-1b"
+      availability_zone = "us-east-1b"
+      cidr_block        = "10.0.2.0/24"
+    }
+    "us-east-1c" = {
+      subnet_id         = "subnet-dev-private-1c"
+      availability_zone = "us-east-1c"
+      cidr_block        = "10.0.3.0/24"
+    }
+  }
+
+  public_subnet_ids = {
+    "us-east-1a" = "subnet-dev-public-1a"
+    "us-east-1b" = "subnet-dev-public-1b"
+    "us-east-1c" = "subnet-dev-public-1c"
+  }
+
+  security_group_ids = {
+    agentcore_runtime  = "sg-dev-runtime"
+    vpc_endpoints      = "sg-dev-vpce"
+    nat_gateway_egress = "sg-dev-nat"
+  }
+
+  route_table_ids = {
+    "us-east-1a" = "rtb-dev-private-1a"
+    "us-east-1b" = "rtb-dev-private-1b"
+    "us-east-1c" = "rtb-dev-private-1c"
+  }
+}
+
+# ==============================================================================
+# SCALE PROFILE - Dev (Cost-optimized)
+# ==============================================================================
+scale_profile = {
+  # Network - cost-optimized, single NAT acceptable for dev
+  nat_mode              = "single"
+  vpc_endpoint_az_count = 1
+
+  # Runtime - lower limits for cost savings
+  runtime_concurrency_limit = 10
+  runtime_memory_mb         = 512
+  runtime_timeout_seconds   = 60
+
+  # Observability - shorter retention for dev
+  log_retention_days         = 30
+  metrics_resolution_seconds = 60
+  alarm_evaluation_periods   = 3
+
+  # Tool execution - relaxed limits
+  tool_execution_timeout_seconds = 30
+  tool_max_concurrent_executions = 5
+
+  # Feature flags - enable for testing new features
+  enable_gateway = true
+  enable_memory  = true
+}
+
+# ==============================================================================
+# AGENT DEFINITIONS
+# ==============================================================================
+agents = {
+  "customer-support" = {
+    name        = "Customer Support Agent"
+    description = "Handles customer inquiries and support requests"
+
+    runtime_version_digest = "sha256:a1b2c3d4e5f6789012345678901234567890abcdef1234567890abcdef123456"
+
+    capability_bundles = [
+      "baseline",
+      "dynamodb_readonly",
+      "bedrock_invoke_model"
+    ]
+
+    additional_tags = {
+      Team = "customer-experience"
+    }
+  }
+
+  "data-analyst" = {
+    name        = "Data Analyst Agent"
+    description = "Analyzes data and generates reports"
+
+    runtime_version_digest = "sha256:b2c3d4e5f67890123456789012345678901abcdef1234567890abcdef1234567"
+
+    capability_bundles = [
+      "baseline",
+      "s3_readwrite",
+      "dynamodb_readonly",
+      "bedrock_invoke_model"
+    ]
+
+    memory_mb_override = 1024
+
+    additional_tags = {
+      Team = "data-engineering"
+    }
+  }
+}
+
+# ==============================================================================
+# CROSS-ACCOUNT ACCESS (Disabled for dev)
+# ==============================================================================
+cross_account_access = {
+  enabled                 = false
+  allowed_caller_accounts = []
+  allowed_caller_roles    = {}
+  allowed_caller_vpc_ids  = []
+}
+
+# ==============================================================================
+# OBSERVABILITY
+# ==============================================================================
+observability_config = {
+  splunk_hec_endpoint         = "https://splunk-hec.bank.internal:8088"
+  splunk_hec_token_secret_arn = "arn:aws:secretsmanager:us-east-1:111111111111:secret:agentcore/splunk-hec-token"
+  alarm_sns_topic_arn         = "arn:aws:sns:us-east-1:111111111111:agentcore-dev-alarms"
+  enable_xray_tracing         = true
+  dashboard_enabled           = true
+}
+
+# ==============================================================================
+# TAGS
+# ==============================================================================
+tags = {
+  CostCenter  = "platform-engineering"
+  Application = "agentcore"
+  Owner       = "platform-team"
+}
+
