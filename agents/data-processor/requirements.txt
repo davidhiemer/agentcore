@@ -1,0 +1,38 @@
+# ==============================================================================
+# Data Processor Agent - Dependencies
+# ==============================================================================
+# Full dependency set for an agent with AWS integrations.
+# All versions are pinned for reproducible builds.
+# ==============================================================================
+
+# AWS SDK - required for all AWS integrations
+boto3==1.34.34
+botocore==1.34.34
+
+# Logging and observability
+structlog==24.1.0
+python-json-logger==2.0.7
+
+# AWS X-Ray for distributed tracing
+aws-xray-sdk==2.13.0
+
+# Data processing
+pandas==2.2.0
+numpy==1.26.3
+
+# JSON handling and validation
+pydantic==2.6.0
+pydantic-settings==2.1.0
+
+# Date/time handling
+python-dateutil==2.8.2
+
+# HTTP client for external API calls (if needed)
+httpx==0.26.0
+
+# Async support
+anyio==4.2.0
+
+# Type hints support
+typing-extensions==4.9.0
+

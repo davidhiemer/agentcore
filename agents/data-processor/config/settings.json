@@ -1,0 +1,32 @@
+{
+  "agent": {
+    "name": "DataProcessorAgent",
+    "version": "1.0.0",
+    "description": "Full-featured AgentCore agent with AWS integrations"
+  },
+  "capabilities": {
+    "dynamodb": {
+      "enabled": true,
+      "operations": ["read", "write"]
+    },
+    "s3": {
+      "enabled": true,
+      "operations": ["read", "write"]
+    },
+    "bedrock": {
+      "enabled": true,
+      "operations": ["invoke_model"]
+    }
+  },
+  "limits": {
+    "max_processing_items": 1000,
+    "request_timeout_seconds": 30,
+    "max_response_tokens": 4096
+  },
+  "observability": {
+    "xray_enabled": true,
+    "log_level": "INFO",
+    "metrics_enabled": true
+  }
+}
+
