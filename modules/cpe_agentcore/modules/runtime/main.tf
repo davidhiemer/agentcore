@@ -29,7 +29,7 @@ resource "aws_cloudwatch_log_group" "agent_runtime" {
 resource "aws_bedrockagentcore_agent_runtime" "agent" {
   for_each = var.agents
 
-  agent_runtime_name = "${var.name_prefix}-${each.key}"
+  agent_runtime_name = replace("${var.name_prefix}_${each.key}", "-", "_")
   description        = each.value.description
 
   # Container configuration - references ECR image by digest
@@ -47,11 +47,6 @@ resource "aws_bedrockagentcore_agent_runtime" "agent" {
     network_mode = "VPC"
   }
 
-  # Runtime compute configuration
-  # Note: Actual attribute names may vary - check provider docs
-  # memory_size_mb = each.value.effective_memory_mb
-  # timeout_seconds = each.value.effective_timeout_seconds
-
   tags = each.value.effective_tags
 }
 
@@ -63,11 +58,11 @@ resource "aws_bedrockagentcore_agent_runtime" "agent" {
 resource "aws_bedrockagentcore_agent_runtime_endpoint" "agent" {
   for_each = var.agents
 
-  name        = "${var.name_prefix}-${each.key}-endpoint"
+  name        = replace("${var.name_prefix}_${each.key}_endpoint", "-", "_")
   description = "Endpoint for ${each.value.name}"
 
-  # Reference the agent runtime
-  agent_runtime_id = aws_bedrockagentcore_agent_runtime.agent[each.key].id
+  # Reference the agent runtime - uses prefixed attribute name
+  agent_runtime_id = aws_bedrockagentcore_agent_runtime.agent[each.key].agent_runtime_id
 
   tags = each.value.effective_tags
 }
@@ -90,12 +85,14 @@ resource "aws_ssm_parameter" "runtime_config" {
     description = each.value.description
 
     runtime = {
-      arn  = aws_bedrockagentcore_agent_runtime.agent[each.key].arn
+      arn  = aws_bedrockagentcore_agent_runtime.agent[each.key].agent_runtime_arn
+      id   = aws_bedrockagentcore_agent_runtime.agent[each.key].agent_runtime_id
       mode = each.value.mode
     }
 
     endpoint = {
-      arn = aws_bedrockagentcore_agent_runtime_endpoint.agent[each.key].arn
+      arn = aws_bedrockagentcore_agent_runtime_endpoint.agent[each.key].agent_runtime_endpoint_arn
+      # Note: endpoint_url is not an exported attribute; access via ARN
     }
 
     container = {
@@ -119,26 +116,30 @@ resource "aws_ssm_parameter" "runtime_config" {
 
 # ------------------------------------------------------------------------------
 # OUTPUTS LOCALS
+# Uses prefixed attribute names as per AWS provider schema
 # ------------------------------------------------------------------------------
 
 locals {
   runtime_arns = {
-    for k, v in aws_bedrockagentcore_agent_runtime.agent : k => v.arn
+    for k, v in aws_bedrockagentcore_agent_runtime.agent : k => v.agent_runtime_arn
   }
 
   runtime_ids = {
-    for k, v in aws_bedrockagentcore_agent_runtime.agent : k => v.id
+    for k, v in aws_bedrockagentcore_agent_runtime.agent : k => v.agent_runtime_id
   }
 
+  # Status may not be available - use try() for safety
   runtime_status = {
-    for k, v in aws_bedrockagentcore_agent_runtime.agent : k => v.status
+    for k, v in aws_bedrockagentcore_agent_runtime.agent : k => try(v.status, "UNKNOWN")
   }
 
   endpoint_arns = {
-    for k, v in aws_bedrockagentcore_agent_runtime_endpoint.agent : k => v.arn
+    for k, v in aws_bedrockagentcore_agent_runtime_endpoint.agent : k => v.agent_runtime_endpoint_arn
   }
 
+  # Note: aws_bedrockagentcore_agent_runtime_endpoint does not export endpoint_url
+  # Using empty map - URLs can be derived from ARN or obtained via AWS API after creation
   endpoint_urls = {
-    for k, v in aws_bedrockagentcore_agent_runtime_endpoint.agent : k => v.endpoint_url
+    for k, v in aws_bedrockagentcore_agent_runtime_endpoint.agent : k => null
   }
 }

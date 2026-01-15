@@ -19,7 +19,7 @@ output "endpoint_arns" {
 }
 
 output "endpoint_urls" {
-  description = "Map of agent key to endpoint invocation URL"
+  description = "Map of agent key to endpoint URL (null - resource does not export URL; use ARN for invocation)"
   value       = local.endpoint_urls
 }
 

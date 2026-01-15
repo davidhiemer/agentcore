@@ -257,14 +257,14 @@ variable "agents" {
 
   validation {
     condition = alltrue([
-      for k, v in var.agents : v.mode == "realtime" ? (v.timeout_seconds == null || v.timeout_seconds <= 300) : true
+      for k, v in var.agents : v.mode == "realtime" ? coalesce(v.timeout_seconds, 0) <= 300 : true
     ])
     error_message = "Realtime agents must have timeout <= 300 seconds."
   }
 
   validation {
     condition = alltrue([
-      for k, v in var.agents : v.mode == "async" ? (v.timeout_seconds == null || v.timeout_seconds <= 28800) : true
+      for k, v in var.agents : v.mode == "async" ? coalesce(v.timeout_seconds, 0) <= 28800 : true
     ])
     error_message = "Async agents must have timeout <= 28800 seconds (8 hours)."
   }
@@ -371,7 +371,7 @@ variable "identity_config" {
   validation {
     condition = var.identity_config.enabled == false || (
       var.identity_config.provider != null &&
-      contains(["cognito", "entra_id", "okta", "saml"], var.identity_config.provider.type)
+      contains(["cognito", "entra_id", "okta", "saml"], try(var.identity_config.provider.type, ""))
     )
     error_message = "When identity is enabled, provider type must be one of: cognito, entra_id, okta, saml."
   }

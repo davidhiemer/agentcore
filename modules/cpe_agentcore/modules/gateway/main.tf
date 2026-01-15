@@ -68,8 +68,7 @@ resource "aws_api_gateway_rest_api" "gateway" {
   description = "AgentCore Gateway API for tool execution"
 
   endpoint_configuration {
-    types = ["PRIVATE"]
-    vpc_endpoint_ids = [] # Will be populated with VPC endpoint
+    types = ["REGIONAL"]
   }
 
   tags = var.tags
@@ -116,16 +115,8 @@ resource "aws_api_gateway_usage_plan" "agent_plans" {
   }
 
   throttle_settings {
-    burst_limit = lookup(
-      var.gateway_config.tool_policies,
-      each.key,
-      { rate_limit = { burst_limit = 100 } }
-    ).rate_limit.burst_limit
-    rate_limit = lookup(
-      var.gateway_config.tool_policies,
-      each.key,
-      { rate_limit = { requests_per_minute = 1000 } }
-    ).rate_limit.requests_per_minute / 60
+    burst_limit = try(var.gateway_config.tool_policies[each.key].rate_limit.burst_limit, 100)
+    rate_limit  = try(var.gateway_config.tool_policies[each.key].rate_limit.requests_per_minute, 1000) / 60
   }
 
   tags = merge(var.tags, each.value.effective_tags)
