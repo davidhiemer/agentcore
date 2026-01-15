@@ -1,15 +1,52 @@
 # ==============================================================================
 # ENDPOINTS SUBMODULE
-# Amazon Bedrock AgentCore Runtime Endpoints
-# Provides versioned endpoints for agent invocation
+# Amazon Bedrock AgentCore Endpoint Policies
+# Manages cross-account access and endpoint versioning/aliases
+#
+# Note: The actual aws_bedrockagentcore_agent_runtime_endpoint resources
+# are created in the runtime module. This module handles:
+# - Cross-account access policies
+# - Endpoint aliases for versioning
+# - Endpoint metadata storage
 # ==============================================================================
 
+data "aws_caller_identity" "current" {}
+
 # ------------------------------------------------------------------------------
-# AGENTCORE ENDPOINT CONFIGURATION
-# Creates endpoints pinned to specific runtime versions
+# ENDPOINT ALIASES
+# Support for versioned access patterns (live, canary, etc.)
+# Stored in SSM for easy lookup by calling applications
 # ------------------------------------------------------------------------------
 
-# SSM Parameter to store endpoint configuration
+resource "aws_ssm_parameter" "endpoint_alias_live" {
+  for_each = var.agents
+
+  name        = "/${var.name_prefix}/endpoints/${each.key}/aliases/live"
+  description = "Live alias for ${each.value.name} endpoint"
+  type        = "String"
+
+  value = jsonencode({
+    alias            = "live"
+    version          = "v1"
+    endpoint_arn     = var.endpoint_arns[each.key]
+    endpoint_url     = var.endpoint_urls[each.key]
+    runtime_arn      = var.runtime_arns[each.key]
+    container_digest = each.value.container_image_digest
+    updated_at       = timestamp()
+  })
+
+  tags = merge(var.tags, each.value.effective_tags)
+
+  lifecycle {
+    ignore_changes = [value]
+  }
+}
+
+# ------------------------------------------------------------------------------
+# ENDPOINT CONFIGURATION STORE
+# Full endpoint configuration for discovery
+# ------------------------------------------------------------------------------
+
 resource "aws_ssm_parameter" "endpoint_config" {
   for_each = var.agents
 
@@ -22,9 +59,8 @@ resource "aws_ssm_parameter" "endpoint_config" {
     agent_name = each.value.name
 
     endpoint = {
-      id      = "${var.name_prefix}-${each.key}-endpoint"
-      version = "v1"
-      alias   = "live"
+      arn = var.endpoint_arns[each.key]
+      url = var.endpoint_urls[each.key]
     }
 
     runtime = {
@@ -36,43 +72,14 @@ resource "aws_ssm_parameter" "endpoint_config" {
       digest = each.value.container_image_digest
     }
 
-    invocation = {
-      url = "https://bedrock-agentcore-runtime.${var.aws_region}.amazonaws.com/agents/${var.name_prefix}-${each.key}/invoke"
-    }
+    mode = each.value.mode
   })
 
   tags = merge(var.tags, each.value.effective_tags)
 }
 
 # ------------------------------------------------------------------------------
-# ENDPOINT ALIASES
-# Support for versioned access patterns (live, canary, etc.)
-# ------------------------------------------------------------------------------
-
-resource "aws_ssm_parameter" "endpoint_alias_live" {
-  for_each = var.agents
-
-  name        = "/${var.name_prefix}/endpoints/${each.key}/aliases/live"
-  description = "Live alias for ${each.value.name} endpoint"
-  type        = "String"
-
-  value = jsonencode({
-    alias   = "live"
-    version = "v1"
-    runtime_arn = var.runtime_arns[each.key]
-    container_digest = each.value.container_image_digest
-    updated_at = timestamp()
-  })
-
-  tags = merge(var.tags, each.value.effective_tags)
-
-  lifecycle {
-    ignore_changes = [value]
-  }
-}
-
-# ------------------------------------------------------------------------------
-# CROSS-ACCOUNT ENDPOINT ACCESS
+# CROSS-ACCOUNT ENDPOINT ACCESS POLICY
 # Resource policy for cross-account invocation
 # ------------------------------------------------------------------------------
 
@@ -96,39 +103,13 @@ resource "aws_ssm_parameter" "endpoint_access_policy" {
           ]
         }
         Action = [
-          "bedrock-agentcore:InvokeAgent",
-          "bedrock-agentcore:InvokeAgentWithResponseStream"
+          "bedrock-agentcore:InvokeAgentRuntime",
+          "bedrock-agentcore:InvokeAgentRuntimeWithResponseStream"
         ]
-        Resource = [
-          for k, v in var.agents :
-          "arn:aws:bedrock-agentcore:${var.aws_region}:${data.aws_caller_identity.current.account_id}:endpoint/${var.name_prefix}-${k}/*"
-        ]
+        Resource = values(var.endpoint_arns)
       }
     ]
   })
 
   tags = var.tags
 }
-
-# ------------------------------------------------------------------------------
-# PLACEHOLDER RESOURCES FOR OUTPUTS
-# Replace with actual AgentCore endpoint resources when available
-# ------------------------------------------------------------------------------
-
-locals {
-  endpoint_arns = {
-    for k, v in var.agents : k =>
-    "arn:aws:bedrock-agentcore:${var.aws_region}:${data.aws_caller_identity.current.account_id}:endpoint/${var.name_prefix}-${k}"
-  }
-
-  endpoint_ids = {
-    for k, v in var.agents : k => "${var.name_prefix}-${k}-endpoint"
-  }
-
-  endpoint_urls = {
-    for k, v in var.agents : k =>
-    "https://bedrock-agentcore-runtime.${var.aws_region}.amazonaws.com/agents/${var.name_prefix}-${k}/invoke"
-  }
-}
-
-data "aws_caller_identity" "current" {}

@@ -4,6 +4,9 @@
 # Amazon Bedrock AgentCore Platform
 # This module orchestrates all internal submodules with explicit dependency ordering.
 # Submodules are NOT independently consumable.
+#
+# Uses aws_bedrockagentcore_* resources (AWS provider >= 6.17.0)
+# Reference: https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/bedrockagentcore_agent_runtime
 # ==============================================================================
 
 data "aws_caller_identity" "current" {}
@@ -119,8 +122,9 @@ module "identity" {
 }
 
 # ------------------------------------------------------------------------------
-# AGENTCORE RUNTIME
+# AGENTCORE RUNTIME & ENDPOINTS
 # Core runtime resources for containerized agents
+# Creates aws_bedrockagentcore_agent_runtime and aws_bedrockagentcore_agent_runtime_endpoint
 # Depends on: network, iam, ecr, identity
 # ------------------------------------------------------------------------------
 module "runtime" {
@@ -149,8 +153,8 @@ module "runtime" {
 }
 
 # ------------------------------------------------------------------------------
-# AGENTCORE ENDPOINTS
-# Runtime endpoints pinned to specific versions/digests
+# AGENTCORE ENDPOINT POLICIES
+# Cross-account access and endpoint aliases for versioning
 # Depends on: runtime
 # ------------------------------------------------------------------------------
 module "endpoints" {
@@ -163,9 +167,11 @@ module "endpoints" {
   # Agent configurations with pinned digests
   agents = local.agents_normalized
 
-  # Runtime dependencies
-  runtime_arns = module.runtime.runtime_arns
-  runtime_ids  = module.runtime.runtime_ids
+  # Runtime dependencies - endpoints created in runtime module
+  runtime_arns  = module.runtime.runtime_arns
+  runtime_ids   = module.runtime.runtime_ids
+  endpoint_arns = module.runtime.endpoint_arns
+  endpoint_urls = module.runtime.endpoint_urls
 
   # Cross-account access for endpoint invocation
   cross_account_access = var.cross_account_access
@@ -267,7 +273,7 @@ module "tools" {
 # ------------------------------------------------------------------------------
 # OBSERVABILITY
 # CloudWatch logs/metrics/alarms, Splunk forwarding
-# Depends on: runtime, endpoints, memory, gateway, tools
+# Depends on: runtime, memory, gateway, tools
 # ------------------------------------------------------------------------------
 module "observability" {
   source = "./modules/observability"
@@ -302,9 +308,9 @@ module "observability" {
   gateway_enabled = local.gateway_enabled
   tools_enabled   = local.tools_enabled
 
-  # Dependencies
+  # Dependencies - endpoints now come from runtime module
   runtime_arns  = module.runtime.runtime_arns
-  endpoint_arns = module.endpoints.endpoint_arns
+  endpoint_arns = module.runtime.endpoint_arns
   memory_arns   = local.memory_enabled ? module.memory[0].memory_store_arns : {}
   gateway_arn   = local.gateway_enabled ? module.gateway[0].gateway_arn : null
   tools_arns    = local.tools_enabled ? module.tools[0].tools_arns : {}

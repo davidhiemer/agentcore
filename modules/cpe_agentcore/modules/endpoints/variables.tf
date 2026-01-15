@@ -33,12 +33,22 @@ variable "agents" {
 }
 
 variable "runtime_arns" {
-  description = "Map of agent key to runtime ARN"
+  description = "Map of agent key to runtime ARN (from runtime module)"
   type        = map(string)
 }
 
 variable "runtime_ids" {
-  description = "Map of agent key to runtime ID"
+  description = "Map of agent key to runtime ID (from runtime module)"
+  type        = map(string)
+}
+
+variable "endpoint_arns" {
+  description = "Map of agent key to endpoint ARN (from runtime module)"
+  type        = map(string)
+}
+
+variable "endpoint_urls" {
+  description = "Map of agent key to endpoint URL (from runtime module)"
   type        = map(string)
 }
 

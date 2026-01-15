@@ -1,3 +1,8 @@
+# ==============================================================================
+# PROVIDER CONFIGURATION
+# Amazon Bedrock AgentCore Platform
+# ==============================================================================
+
 provider "aws" {
   region = var.aws_region
 
@@ -9,9 +14,3 @@ provider "aws" {
   retry_mode  = "adaptive"
   max_retries = 5
 }
-
-provider "awscc" {
-  region = var.aws_region
-}
-
-

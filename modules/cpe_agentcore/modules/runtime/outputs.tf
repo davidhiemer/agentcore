@@ -13,6 +13,16 @@ output "runtime_status" {
   value       = local.runtime_status
 }
 
+output "endpoint_arns" {
+  description = "Map of agent key to endpoint ARN"
+  value       = local.endpoint_arns
+}
+
+output "endpoint_urls" {
+  description = "Map of agent key to endpoint invocation URL"
+  value       = local.endpoint_urls
+}
+
 output "runtime_config_parameters" {
   description = "Map of agent key to SSM parameter ARN containing runtime config"
   value       = { for k, v in aws_ssm_parameter.runtime_config : k => v.arn }

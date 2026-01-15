@@ -103,7 +103,7 @@ output "runtime_status" {
 # ------------------------------------------------------------------------------
 output "endpoint_arns" {
   description = "Map of agent key to endpoint ARN"
-  value       = module.endpoints.endpoint_arns
+  value       = module.runtime.endpoint_arns
 }
 
 output "endpoint_ids" {
@@ -113,7 +113,7 @@ output "endpoint_ids" {
 
 output "endpoint_urls" {
   description = "Map of agent key to endpoint invocation URL"
-  value       = module.endpoints.endpoint_urls
+  value       = module.runtime.endpoint_urls
 }
 
 # ------------------------------------------------------------------------------
@@ -255,6 +255,6 @@ output "summary" {
       tools    = local.tools_enabled
     }
 
-    endpoints = module.endpoints.endpoint_urls
+    endpoints = module.runtime.endpoint_urls
   }
 }

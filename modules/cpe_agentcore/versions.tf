@@ -1,16 +1,15 @@
+# ==============================================================================
+# TERRAFORM VERSION AND PROVIDER REQUIREMENTS
+# Amazon Bedrock AgentCore Platform
+# ==============================================================================
+
 terraform {
   required_version = ">= 1.6.0, < 2.0.0"
 
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = ">= 5.40.0, < 6.0.0"
-    }
-    awscc = {
-      source  = "hashicorp/awscc"
-      version = ">= 1.0.0, < 2.0.0"
+      version = ">= 6.17.0" # Required for aws_bedrockagentcore_* resources
     }
   }
 }
-
-
