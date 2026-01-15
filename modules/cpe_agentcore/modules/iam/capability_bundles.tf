@@ -1,5 +1,6 @@
 # ==============================================================================
 # CAPABILITY BUNDLE DEFINITIONS
+# For Amazon Bedrock AgentCore Platform
 # ==============================================================================
 
 locals {
@@ -45,6 +46,26 @@ locals {
               "cloudwatch:namespace" = "AgentCore/${var.environment}"
             }
           }
+        },
+        {
+          Sid    = "ECRPull"
+          Effect = "Allow"
+          Action = [
+            "ecr:GetAuthorizationToken"
+          ]
+          Resource = "*"
+        },
+        {
+          Sid    = "ECRPullImages"
+          Effect = "Allow"
+          Action = [
+            "ecr:BatchCheckLayerAvailability",
+            "ecr:GetDownloadUrlForLayer",
+            "ecr:BatchGetImage"
+          ]
+          Resource = [
+            "arn:aws:ecr:${var.aws_region}:${var.aws_account_id}:repository/${var.name_prefix}/*"
+          ]
         }
       ]
     }
@@ -217,7 +238,8 @@ locals {
               "kms:ViaService" = [
                 "s3.${var.aws_region}.amazonaws.com",
                 "secretsmanager.${var.aws_region}.amazonaws.com",
-                "dynamodb.${var.aws_region}.amazonaws.com"
+                "dynamodb.${var.aws_region}.amazonaws.com",
+                "bedrock-agentcore.${var.aws_region}.amazonaws.com"
               ]
             }
           }
@@ -301,11 +323,91 @@ locals {
           ]
           Resource = [
             "arn:aws:bedrock:${var.aws_region}::foundation-model/*",
-            "arn:aws:bedrock:${var.aws_region}:${var.aws_account_id}:provisioned-model/*"
+            "arn:aws:bedrock:${var.aws_region}:${var.aws_account_id}:provisioned-model/*",
+            "arn:aws:bedrock:${var.aws_region}:${var.aws_account_id}:inference-profile/*"
+          ]
+        }
+      ]
+    }
+
+    # =========================================================================
+    # AGENTCORE MEMORY
+    # Access to AgentCore Memory APIs
+    # =========================================================================
+    agentcore_memory = {
+      Version = "2012-10-17"
+      Statement = [
+        {
+          Sid    = "AgentCoreMemory"
+          Effect = "Allow"
+          Action = [
+            "bedrock-agentcore:GetSessionMemory",
+            "bedrock-agentcore:PutSessionMemory",
+            "bedrock-agentcore:DeleteSessionMemory",
+            "bedrock-agentcore:GetKnowledge",
+            "bedrock-agentcore:PutKnowledge",
+            "bedrock-agentcore:QueryKnowledge"
+          ]
+          Resource = [
+            "arn:aws:bedrock-agentcore:${var.aws_region}:${var.aws_account_id}:memory/*"
+          ]
+        }
+      ]
+    }
+
+    # =========================================================================
+    # AGENTCORE GATEWAY
+    # Access to AgentCore Gateway APIs
+    # =========================================================================
+    agentcore_gateway = {
+      Version = "2012-10-17"
+      Statement = [
+        {
+          Sid    = "AgentCoreGateway"
+          Effect = "Allow"
+          Action = [
+            "bedrock-agentcore:InvokeTool",
+            "bedrock-agentcore:ListTools",
+            "bedrock-agentcore:GetToolDefinition"
+          ]
+          Resource = [
+            "arn:aws:bedrock-agentcore:${var.aws_region}:${var.aws_account_id}:gateway/*"
+          ]
+        }
+      ]
+    }
+
+    # =========================================================================
+    # AGENTCORE TOOLS
+    # Access to Code Interpreter and Browser Tool
+    # =========================================================================
+    agentcore_tools = {
+      Version = "2012-10-17"
+      Statement = [
+        {
+          Sid    = "AgentCoreCodeInterpreter"
+          Effect = "Allow"
+          Action = [
+            "bedrock-agentcore:ExecuteCode",
+            "bedrock-agentcore:GetCodeExecutionResult"
+          ]
+          Resource = [
+            "arn:aws:bedrock-agentcore:${var.aws_region}:${var.aws_account_id}:code-interpreter/*"
+          ]
+        },
+        {
+          Sid    = "AgentCoreBrowserTool"
+          Effect = "Allow"
+          Action = [
+            "bedrock-agentcore:BrowseUrl",
+            "bedrock-agentcore:GetPageContent",
+            "bedrock-agentcore:TakeScreenshot"
+          ]
+          Resource = [
+            "arn:aws:bedrock-agentcore:${var.aws_region}:${var.aws_account_id}:browser/*"
           ]
         }
       ]
     }
   }
 }
-

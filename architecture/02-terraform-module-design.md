@@ -896,3 +896,4 @@ output "memory_endpoint" {
 - **Why**: Immutable references; audit trail of exact versions; prevents tag mutation issues; deterministic deployments
 - **Why not allow tags**: Tags are mutable; same tag could reference different content over time
 
+

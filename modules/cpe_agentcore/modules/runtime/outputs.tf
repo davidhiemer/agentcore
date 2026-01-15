@@ -1,20 +1,29 @@
 output "runtime_arns" {
-  description = "Map of agent key to runtime ARN"
-  value       = { for k, v in awscc_bedrock_agent.agent : k => v.agent_arn }
+  description = "Map of agent key to AgentCore Runtime ARN"
+  value       = local.runtime_arns
 }
 
 output "runtime_ids" {
-  description = "Map of agent key to runtime ID"
-  value       = { for k, v in awscc_bedrock_agent.agent : k => v.agent_id }
+  description = "Map of agent key to AgentCore Runtime ID"
+  value       = local.runtime_ids
 }
 
-output "alias_arns" {
-  description = "Map of agent key to alias ARN"
-  value       = { for k, v in awscc_bedrock_agent_alias.agent : k => v.agent_alias_arn }
+output "runtime_status" {
+  description = "Map of agent key to runtime status"
+  value       = local.runtime_status
 }
 
-output "alias_ids" {
-  description = "Map of agent key to alias ID"
-  value       = { for k, v in awscc_bedrock_agent_alias.agent : k => v.agent_alias_id }
+output "runtime_config_parameters" {
+  description = "Map of agent key to SSM parameter ARN containing runtime config"
+  value       = { for k, v in aws_ssm_parameter.runtime_config : k => v.arn }
 }
 
+output "log_group_arns" {
+  description = "Map of agent key to CloudWatch log group ARN"
+  value       = { for k, v in aws_cloudwatch_log_group.agent_runtime : k => v.arn }
+}
+
+output "log_group_names" {
+  description = "Map of agent key to CloudWatch log group name"
+  value       = { for k, v in aws_cloudwatch_log_group.agent_runtime : k => v.name }
+}

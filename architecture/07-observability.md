@@ -1019,3 +1019,4 @@ output "firehose_arn" {
 - **Why**: Banking data protection requirements; key rotation; audit trail on key usage; compliance requirement
 - **Why not default encryption**: Less control; no key usage audit; may not meet compliance requirements
 
+

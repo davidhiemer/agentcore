@@ -1,6 +1,7 @@
 # ==============================================================================
 # ROOT MODULE ORCHESTRATION
 # 
+# Amazon Bedrock AgentCore Platform
 # This module orchestrates all internal submodules with explicit dependency ordering.
 # Submodules are NOT independently consumable.
 # ==============================================================================
@@ -84,6 +85,11 @@ module "iam" {
   # Cross-account access
   cross_account_access = var.cross_account_access
 
+  # Feature flags for capability bundles
+  memory_enabled  = local.memory_enabled
+  gateway_enabled = local.gateway_enabled
+  tools_enabled   = local.tools_enabled
+
   # Dependencies from network module
   vpc_endpoint_arns = module.network.vpc_endpoint_arns
 
@@ -91,9 +97,31 @@ module "iam" {
 }
 
 # ------------------------------------------------------------------------------
+# AGENTCORE IDENTITY
+# Enterprise identity provider integration
+# Depends on: iam
+# ------------------------------------------------------------------------------
+module "identity" {
+  source = "./modules/identity"
+  count  = local.identity_enabled ? 1 : 0
+
+  environment = var.environment
+  name_prefix = local.name_prefix
+  aws_region  = var.aws_region
+
+  # Identity configuration
+  identity_config = var.identity_config
+
+  # Agent configurations for role mappings
+  agents = local.agents_normalized
+
+  tags = local.common_tags
+}
+
+# ------------------------------------------------------------------------------
 # AGENTCORE RUNTIME
-# Core runtime resources (VPC-attached)
-# Depends on: network, iam, ecr
+# Core runtime resources for containerized agents
+# Depends on: network, iam, ecr, identity
 # ------------------------------------------------------------------------------
 module "runtime" {
   source = "./modules/runtime"
@@ -107,15 +135,15 @@ module "runtime" {
 
   # VPC attachment
   vpc_id            = var.vpc_config.vpc_id
-  subnet_ids        = [for az, subnet_id in local.subnets_by_az : subnet_id]
+  subnet_ids        = local.subnet_ids_list
   security_group_id = var.vpc_config.security_group_ids.agentcore_runtime
-
-  # Scale profile
-  concurrency_limit = var.scale_profile.runtime_concurrency_limit
 
   # Dependencies
   ecr_repository_urls = module.ecr.repository_urls
   execution_role_arns = module.iam.execution_role_arns
+
+  # Identity integration
+  identity_provider_arn = local.identity_enabled ? module.identity[0].provider_arn : null
 
   tags = local.common_tags
 }
@@ -130,12 +158,108 @@ module "endpoints" {
 
   environment = var.environment
   name_prefix = local.name_prefix
+  aws_region  = var.aws_region
 
   # Agent configurations with pinned digests
   agents = local.agents_normalized
 
   # Runtime dependencies
   runtime_arns = module.runtime.runtime_arns
+  runtime_ids  = module.runtime.runtime_ids
+
+  # Cross-account access for endpoint invocation
+  cross_account_access = var.cross_account_access
+
+  tags = local.common_tags
+}
+
+# ------------------------------------------------------------------------------
+# AGENTCORE MEMORY
+# Session and long-term memory for agents
+# Depends on: iam, runtime
+# ------------------------------------------------------------------------------
+module "memory" {
+  source = "./modules/memory"
+  count  = local.memory_enabled ? 1 : 0
+
+  environment = var.environment
+  name_prefix = local.name_prefix
+  aws_region  = var.aws_region
+
+  # Memory configuration
+  memory_config = local.memory_config_normalized
+
+  # Agent configurations
+  agents = local.agents_normalized
+
+  # VPC attachment
+  vpc_id     = var.vpc_config.vpc_id
+  subnet_ids = local.subnet_ids_list
+
+  # Dependencies
+  execution_role_arns = module.iam.execution_role_arns
+  runtime_ids         = module.runtime.runtime_ids
+
+  tags = local.common_tags
+}
+
+# ------------------------------------------------------------------------------
+# AGENTCORE GATEWAY
+# Tool governance and connectivity
+# Depends on: iam, runtime
+# ------------------------------------------------------------------------------
+module "gateway" {
+  source = "./modules/gateway"
+  count  = local.gateway_enabled ? 1 : 0
+
+  environment = var.environment
+  name_prefix = local.name_prefix
+  aws_region  = var.aws_region
+
+  # Gateway configuration
+  gateway_config = local.gateway_config_normalized
+
+  # Agent configurations
+  agents = local.agents_normalized
+
+  # VPC attachment
+  vpc_id     = var.vpc_config.vpc_id
+  subnet_ids = local.subnet_ids_list
+
+  # Dependencies
+  execution_role_arns = module.iam.execution_role_arns
+  runtime_ids         = module.runtime.runtime_ids
+
+  tags = local.common_tags
+}
+
+# ------------------------------------------------------------------------------
+# AGENTCORE TOOLS
+# Code Interpreter and Browser Tool
+# Depends on: iam, runtime, gateway
+# ------------------------------------------------------------------------------
+module "tools" {
+  source = "./modules/tools"
+  count  = local.tools_enabled ? 1 : 0
+
+  environment = var.environment
+  name_prefix = local.name_prefix
+  aws_region  = var.aws_region
+
+  # Tools configuration
+  tools_config = local.tools_config_normalized
+
+  # Agent configurations
+  agents = local.agents_normalized
+
+  # VPC attachment
+  vpc_id     = var.vpc_config.vpc_id
+  subnet_ids = local.subnet_ids_list
+
+  # Dependencies
+  execution_role_arns = module.iam.execution_role_arns
+  runtime_ids         = module.runtime.runtime_ids
+  gateway_arn         = local.gateway_enabled ? module.gateway[0].gateway_arn : null
 
   tags = local.common_tags
 }
@@ -143,7 +267,7 @@ module "endpoints" {
 # ------------------------------------------------------------------------------
 # OBSERVABILITY
 # CloudWatch logs/metrics/alarms, Splunk forwarding
-# Depends on: runtime, endpoints
+# Depends on: runtime, endpoints, memory, gateway, tools
 # ------------------------------------------------------------------------------
 module "observability" {
   source = "./modules/observability"
@@ -160,6 +284,7 @@ module "observability" {
   log_retention_days         = var.scale_profile.log_retention_days
   metrics_resolution_seconds = var.scale_profile.metrics_resolution_seconds
   alarm_evaluation_periods   = var.scale_profile.alarm_evaluation_periods
+  xray_sampling_rate         = var.scale_profile.xray_sampling_rate
 
   # Splunk integration
   splunk_hec_endpoint         = var.observability_config.splunk_hec_endpoint
@@ -172,48 +297,17 @@ module "observability" {
   enable_xray_tracing = var.observability_config.enable_xray_tracing
   dashboard_enabled   = var.observability_config.dashboard_enabled
 
+  # Component feature flags
+  memory_enabled  = local.memory_enabled
+  gateway_enabled = local.gateway_enabled
+  tools_enabled   = local.tools_enabled
+
   # Dependencies
   runtime_arns  = module.runtime.runtime_arns
   endpoint_arns = module.endpoints.endpoint_arns
+  memory_arns   = local.memory_enabled ? module.memory[0].memory_store_arns : {}
+  gateway_arn   = local.gateway_enabled ? module.gateway[0].gateway_arn : null
+  tools_arns    = local.tools_enabled ? module.tools[0].tools_arns : {}
 
   tags = local.common_tags
 }
-
-# ------------------------------------------------------------------------------
-# GATEWAY (Future - Feature-flagged)
-# Tool governance and connectivity
-# ------------------------------------------------------------------------------
-module "gateway" {
-  source = "./modules/gateway"
-  count  = local.gateway_enabled ? 1 : 0
-
-  environment = var.environment
-  name_prefix = local.name_prefix
-
-  # Dependencies
-  vpc_id              = var.vpc_config.vpc_id
-  subnet_ids          = [for az, subnet_id in local.subnets_by_az : subnet_id]
-  execution_role_arns = module.iam.execution_role_arns
-
-  tags = local.common_tags
-}
-
-# ------------------------------------------------------------------------------
-# MEMORY (Future - Feature-flagged)
-# AgentCore Memory
-# ------------------------------------------------------------------------------
-module "memory" {
-  source = "./modules/memory"
-  count  = local.memory_enabled ? 1 : 0
-
-  environment = var.environment
-  name_prefix = local.name_prefix
-
-  # Dependencies
-  vpc_id              = var.vpc_config.vpc_id
-  subnet_ids          = [for az, subnet_id in local.subnets_by_az : subnet_id]
-  execution_role_arns = module.iam.execution_role_arns
-
-  tags = local.common_tags
-}
-

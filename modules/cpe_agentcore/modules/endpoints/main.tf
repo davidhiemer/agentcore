@@ -1,59 +1,134 @@
 # ==============================================================================
 # ENDPOINTS SUBMODULE
-# AgentCore Runtime Endpoints (pinned to specific versions/digests)
+# Amazon Bedrock AgentCore Runtime Endpoints
+# Provides versioned endpoints for agent invocation
 # ==============================================================================
 
-# Note: This module manages the endpoint configuration that pins agents
-# to specific runtime versions/digests for deterministic deployments
+# ------------------------------------------------------------------------------
+# AGENTCORE ENDPOINT CONFIGURATION
+# Creates endpoints pinned to specific runtime versions
+# ------------------------------------------------------------------------------
 
-locals {
-  # Create endpoint configurations for each agent
-  endpoint_configs = {
-    for agent_key, agent in var.agents : agent_key => {
-      name        = "${var.name_prefix}-endpoint-${agent_key}"
-      runtime_arn = var.runtime_arns[agent_key]
-      digest      = agent.runtime_version_digest
-      tags        = agent.effective_tags
-    }
-  }
-}
-
-# AgentCore runtime endpoint configuration
-# This is a placeholder - actual resource will depend on AgentCore GA API
-# The key concept is pinning to a specific digest for deterministic behavior
-
+# SSM Parameter to store endpoint configuration
 resource "aws_ssm_parameter" "endpoint_config" {
-  for_each = local.endpoint_configs
+  for_each = var.agents
 
   name        = "/${var.name_prefix}/endpoints/${each.key}/config"
-  description = "Endpoint configuration for ${each.key}"
+  description = "AgentCore Endpoint configuration for ${each.value.name}"
   type        = "String"
 
   value = jsonencode({
-    agent_key          = each.key
-    runtime_arn        = each.value.runtime_arn
-    pinned_digest      = each.value.digest
-    endpoint_name      = each.value.name
-    created_at         = timestamp()
-    environment        = var.environment
+    agent_key  = each.key
+    agent_name = each.value.name
+
+    endpoint = {
+      id      = "${var.name_prefix}-${each.key}-endpoint"
+      version = "v1"
+      alias   = "live"
+    }
+
+    runtime = {
+      arn = var.runtime_arns[each.key]
+      id  = var.runtime_ids[each.key]
+    }
+
+    container = {
+      digest = each.value.container_image_digest
+    }
+
+    invocation = {
+      url = "https://bedrock-agentcore-runtime.${var.aws_region}.amazonaws.com/agents/${var.name_prefix}-${each.key}/invoke"
+    }
   })
 
-  tags = merge(var.tags, each.value.tags)
+  tags = merge(var.tags, each.value.effective_tags)
+}
+
+# ------------------------------------------------------------------------------
+# ENDPOINT ALIASES
+# Support for versioned access patterns (live, canary, etc.)
+# ------------------------------------------------------------------------------
+
+resource "aws_ssm_parameter" "endpoint_alias_live" {
+  for_each = var.agents
+
+  name        = "/${var.name_prefix}/endpoints/${each.key}/aliases/live"
+  description = "Live alias for ${each.value.name} endpoint"
+  type        = "String"
+
+  value = jsonencode({
+    alias   = "live"
+    version = "v1"
+    runtime_arn = var.runtime_arns[each.key]
+    container_digest = each.value.container_image_digest
+    updated_at = timestamp()
+  })
+
+  tags = merge(var.tags, each.value.effective_tags)
 
   lifecycle {
-    ignore_changes = [value]  # Managed via explicit updates only
+    ignore_changes = [value]
   }
 }
 
-# Track deployed versions for audit trail
-resource "aws_ssm_parameter" "version_history" {
-  for_each = local.endpoint_configs
+# ------------------------------------------------------------------------------
+# CROSS-ACCOUNT ENDPOINT ACCESS
+# Resource policy for cross-account invocation
+# ------------------------------------------------------------------------------
 
-  name        = "/${var.name_prefix}/endpoints/${each.key}/version"
-  description = "Current deployed version for ${each.key}"
+resource "aws_ssm_parameter" "endpoint_access_policy" {
+  count = var.cross_account_access.enabled ? 1 : 0
+
+  name        = "/${var.name_prefix}/endpoints/access-policy"
+  description = "Cross-account access policy for AgentCore endpoints"
   type        = "String"
-  value       = each.value.digest
 
-  tags = merge(var.tags, each.value.tags)
+  value = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "AllowCrossAccountInvoke"
+        Effect = "Allow"
+        Principal = {
+          AWS = [
+            for account in var.cross_account_access.allowed_caller_accounts :
+            "arn:aws:iam::${account}:root"
+          ]
+        }
+        Action = [
+          "bedrock-agentcore:InvokeAgent",
+          "bedrock-agentcore:InvokeAgentWithResponseStream"
+        ]
+        Resource = [
+          for k, v in var.agents :
+          "arn:aws:bedrock-agentcore:${var.aws_region}:${data.aws_caller_identity.current.account_id}:endpoint/${var.name_prefix}-${k}/*"
+        ]
+      }
+    ]
+  })
+
+  tags = var.tags
 }
 
+# ------------------------------------------------------------------------------
+# PLACEHOLDER RESOURCES FOR OUTPUTS
+# Replace with actual AgentCore endpoint resources when available
+# ------------------------------------------------------------------------------
+
+locals {
+  endpoint_arns = {
+    for k, v in var.agents : k =>
+    "arn:aws:bedrock-agentcore:${var.aws_region}:${data.aws_caller_identity.current.account_id}:endpoint/${var.name_prefix}-${k}"
+  }
+
+  endpoint_ids = {
+    for k, v in var.agents : k => "${var.name_prefix}-${k}-endpoint"
+  }
+
+  endpoint_urls = {
+    for k, v in var.agents : k =>
+    "https://bedrock-agentcore-runtime.${var.aws_region}.amazonaws.com/agents/${var.name_prefix}-${k}/invoke"
+  }
+}
+
+data "aws_caller_identity" "current" {}

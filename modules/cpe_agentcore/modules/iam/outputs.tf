@@ -18,3 +18,4 @@ output "capability_bundle_arns" {
   value       = { for k, v in aws_iam_policy.capability_bundle : k => v.arn }
 }
 
+

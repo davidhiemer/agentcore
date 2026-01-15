@@ -13,18 +13,23 @@ variable "aws_region" {
   type        = string
 }
 
-variable "memory_config" {
-  description = "Memory configuration"
+variable "tools_config" {
+  description = "Tools configuration"
   type = object({
-    session_memory = object({
-      enabled            = bool
-      ttl_hours          = number
-      max_context_tokens = number
+    code_interpreter = object({
+      enabled               = bool
+      languages             = set(string)
+      max_execution_seconds = number
+      memory_mb             = number
+      allow_network         = bool
     })
-    long_term_memory = object({
+
+    browser_tool = object({
       enabled            = bool
-      retention_days     = number
-      encryption_key_arn = string
+      allowed_domains    = set(string)
+      blocked_domains    = set(string)
+      max_page_size_mb   = number
+      screenshot_enabled = bool
     })
   })
 }
@@ -49,7 +54,7 @@ variable "agents" {
 }
 
 variable "vpc_id" {
-  description = "VPC ID for VPC endpoint (if needed)"
+  description = "VPC ID for VPC attachment"
   type        = string
 }
 
@@ -68,7 +73,14 @@ variable "runtime_ids" {
   type        = map(string)
 }
 
+variable "gateway_arn" {
+  description = "ARN of the Gateway (for tool invocation)"
+  type        = string
+  default     = null
+}
+
 variable "tags" {
   description = "Tags to apply to resources"
   type        = map(string)
 }
+

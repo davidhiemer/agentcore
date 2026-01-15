@@ -1,0 +1,239 @@
+# ==============================================================================
+# Build Agent Containers
+# ==============================================================================
+# This workflow builds agent containers and pushes them to Artifactory.
+# The image digest is output for use in promotion workflows.
+#
+# Triggers:
+# - Push to main branch (paths: agents/**)
+# - Manual dispatch with agent selection
+# ==============================================================================
+
+name: Build Agent Containers
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'agents/**'
+  workflow_dispatch:
+    inputs:
+      agent:
+        description: 'Agent to build (or "all")'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - hello-world
+          - data-processor
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  ARTIFACTORY_REGISTRY: artifactory.bank.com/agentcore
+
+jobs:
+  # ===========================================================================
+  # Determine which agents to build
+  # ===========================================================================
+  detect-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      agents: ${{ steps.detect.outputs.agents }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect changed agents
+        id: detect
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            if [ "${{ inputs.agent }}" == "all" ]; then
+              AGENTS='["hello-world", "data-processor"]'
+            else
+              AGENTS='["${{ inputs.agent }}"]'
+            fi
+          else
+            # Detect which agents have changes
+            CHANGED_AGENTS=""
+            for agent in hello-world data-processor; do
+              if git diff --name-only ${{ github.event.before }} ${{ github.sha }} | grep -q "^agents/${agent}/"; then
+                if [ -z "$CHANGED_AGENTS" ]; then
+                  CHANGED_AGENTS="\"${agent}\""
+                else
+                  CHANGED_AGENTS="${CHANGED_AGENTS}, \"${agent}\""
+                fi
+              fi
+            done
+            
+            if [ -z "$CHANGED_AGENTS" ]; then
+              AGENTS='[]'
+            else
+              AGENTS="[${CHANGED_AGENTS}]"
+            fi
+          fi
+          
+          echo "agents=${AGENTS}" >> $GITHUB_OUTPUT
+          echo "Building agents: ${AGENTS}"
+
+  # ===========================================================================
+  # Build agent containers
+  # ===========================================================================
+  build:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.agents != '[]'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        agent: ${{ fromJson(needs.detect-changes.outputs.agents) }}
+    
+    outputs:
+      digest-hello-world: ${{ steps.digest.outputs.digest-hello-world }}
+      digest-data-processor: ${{ steps.digest.outputs.digest-data-processor }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Configure Artifactory credentials
+        uses: jfrog/setup-jfrog-cli@v3
+        with:
+          oidc-provider-name: github-oidc
+          oidc-audience: jfrog-artifactory
+
+      - name: Login to Artifactory
+        run: |
+          docker login ${{ env.ARTIFACTORY_REGISTRY }} \
+            -u ${{ secrets.ARTIFACTORY_USER }} \
+            -p ${{ secrets.ARTIFACTORY_TOKEN }}
+
+      - name: Build container image
+        id: build
+        run: |
+          IMAGE_TAG="${{ github.sha }}"
+          IMAGE_NAME="${{ env.ARTIFACTORY_REGISTRY }}/${{ matrix.agent }}"
+          
+          docker build \
+            --tag ${IMAGE_NAME}:${IMAGE_TAG} \
+            --tag ${IMAGE_NAME}:latest \
+            --label "org.opencontainers.image.revision=${{ github.sha }}" \
+            --label "org.opencontainers.image.created=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            ./agents/${{ matrix.agent }}
+          
+          # Push and capture digest
+          docker push ${IMAGE_NAME}:${IMAGE_TAG}
+          
+          DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' ${IMAGE_NAME}:${IMAGE_TAG} | cut -d'@' -f2)
+          echo "digest=${DIGEST}" >> $GITHUB_OUTPUT
+          echo "Image digest: ${DIGEST}"
+
+      - name: Output digest
+        id: digest
+        run: |
+          echo "digest-${{ matrix.agent }}=${{ steps.build.outputs.digest }}" >> $GITHUB_OUTPUT
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign image with Sigstore
+        run: |
+          cosign sign --yes \
+            --oidc-issuer=https://token.actions.githubusercontent.com \
+            ${{ env.ARTIFACTORY_REGISTRY }}/${{ matrix.agent }}@${{ steps.build.outputs.digest }}
+
+      - name: Generate SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env.ARTIFACTORY_REGISTRY }}/${{ matrix.agent }}@${{ steps.build.outputs.digest }}
+          output-file: sbom-${{ matrix.agent }}.spdx.json
+          format: spdx-json
+
+      - name: Attest SBOM
+        run: |
+          cosign attest --yes \
+            --predicate sbom-${{ matrix.agent }}.spdx.json \
+            --type spdxjson \
+            ${{ env.ARTIFACTORY_REGISTRY }}/${{ matrix.agent }}@${{ steps.build.outputs.digest }}
+
+      - name: Configure AWS credentials (Audit)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::999999999999:role/github-actions-audit
+          aws-region: us-east-1
+
+      - name: Upload build evidence to S3
+        run: |
+          EVIDENCE_KEY="builds/${{ github.repository }}/${{ matrix.agent }}/${{ github.sha }}"
+          
+          # Upload SBOM
+          aws s3 cp sbom-${{ matrix.agent }}.spdx.json \
+            s3://bank-audit-evidence/${EVIDENCE_KEY}/sbom.spdx.json
+          
+          # Create and upload build manifest
+          cat > build-manifest.json << EOF
+          {
+            "repository": "${{ github.repository }}",
+            "agent": "${{ matrix.agent }}",
+            "commit": "${{ github.sha }}",
+            "digest": "${{ steps.build.outputs.digest }}",
+            "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "actor": "${{ github.actor }}",
+            "workflow": "${{ github.workflow }}",
+            "run_id": "${{ github.run_id }}",
+            "run_url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          }
+          EOF
+          aws s3 cp build-manifest.json \
+            s3://bank-audit-evidence/${EVIDENCE_KEY}/build-manifest.json
+
+  # ===========================================================================
+  # Summary
+  # ===========================================================================
+  summary:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Build Summary
+        run: |
+          echo "## Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Agent | Digest |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
+          
+          if [ -n "${{ needs.build.outputs.digest-hello-world }}" ]; then
+            echo "| hello-world | \`${{ needs.build.outputs.digest-hello-world }}\` |" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          if [ -n "${{ needs.build.outputs.digest-data-processor }}" ]; then
+            echo "| data-processor | \`${{ needs.build.outputs.digest-data-processor }}\` |" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Use these digests in your Terraform configuration:" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`hcl" >> $GITHUB_STEP_SUMMARY
+          echo "agents = {" >> $GITHUB_STEP_SUMMARY
+          
+          if [ -n "${{ needs.build.outputs.digest-hello-world }}" ]; then
+            echo "  \"hello-world\" = {" >> $GITHUB_STEP_SUMMARY
+            echo "    runtime_version_digest = \"${{ needs.build.outputs.digest-hello-world }}\"" >> $GITHUB_STEP_SUMMARY
+            echo "    # ..." >> $GITHUB_STEP_SUMMARY
+            echo "  }" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          if [ -n "${{ needs.build.outputs.digest-data-processor }}" ]; then
+            echo "  \"data-processor\" = {" >> $GITHUB_STEP_SUMMARY
+            echo "    runtime_version_digest = \"${{ needs.build.outputs.digest-data-processor }}\"" >> $GITHUB_STEP_SUMMARY
+            echo "    # ..." >> $GITHUB_STEP_SUMMARY
+            echo "  }" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "}" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+

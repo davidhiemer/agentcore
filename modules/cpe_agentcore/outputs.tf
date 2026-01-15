@@ -1,5 +1,6 @@
 # ==============================================================================
 # ROOT MODULE OUTPUTS
+# Amazon Bedrock AgentCore Platform
 # ==============================================================================
 
 # ------------------------------------------------------------------------------
@@ -62,16 +63,39 @@ output "capability_bundle_arns" {
 }
 
 # ------------------------------------------------------------------------------
+# IDENTITY
+# ------------------------------------------------------------------------------
+output "identity_provider_arn" {
+  description = "ARN of the identity provider (if enabled)"
+  value       = local.identity_enabled ? module.identity[0].provider_arn : null
+}
+
+output "identity_endpoint_url" {
+  description = "Identity service endpoint URL (if enabled)"
+  value       = local.identity_enabled ? module.identity[0].endpoint_url : null
+}
+
+output "identity_user_pool_id" {
+  description = "Cognito User Pool ID (if using Cognito)"
+  value       = local.identity_enabled ? module.identity[0].user_pool_id : null
+}
+
+# ------------------------------------------------------------------------------
 # RUNTIME
 # ------------------------------------------------------------------------------
 output "runtime_arns" {
-  description = "Map of agent key to runtime ARN"
+  description = "Map of agent key to AgentCore Runtime ARN"
   value       = module.runtime.runtime_arns
 }
 
 output "runtime_ids" {
-  description = "Map of agent key to runtime ID"
+  description = "Map of agent key to AgentCore Runtime ID"
   value       = module.runtime.runtime_ids
+}
+
+output "runtime_status" {
+  description = "Map of agent key to runtime status"
+  value       = module.runtime.runtime_status
 }
 
 # ------------------------------------------------------------------------------
@@ -85,6 +109,85 @@ output "endpoint_arns" {
 output "endpoint_ids" {
   description = "Map of agent key to endpoint ID"
   value       = module.endpoints.endpoint_ids
+}
+
+output "endpoint_urls" {
+  description = "Map of agent key to endpoint invocation URL"
+  value       = module.endpoints.endpoint_urls
+}
+
+# ------------------------------------------------------------------------------
+# MEMORY
+# ------------------------------------------------------------------------------
+output "memory_store_arns" {
+  description = "Map of agent key to memory store ARN (if enabled)"
+  value       = local.memory_enabled ? module.memory[0].memory_store_arns : {}
+}
+
+output "memory_endpoint_url" {
+  description = "Memory service endpoint URL (if enabled)"
+  value       = local.memory_enabled ? module.memory[0].endpoint_url : null
+}
+
+output "memory_session_table_name" {
+  description = "DynamoDB table name for session memory (if enabled)"
+  value       = local.memory_enabled ? module.memory[0].session_table_name : null
+}
+
+output "memory_knowledge_store_id" {
+  description = "Knowledge store ID for long-term memory (if enabled)"
+  value       = local.memory_enabled ? module.memory[0].knowledge_store_id : null
+}
+
+# ------------------------------------------------------------------------------
+# GATEWAY
+# ------------------------------------------------------------------------------
+output "gateway_arn" {
+  description = "Gateway ARN (if enabled)"
+  value       = local.gateway_enabled ? module.gateway[0].gateway_arn : null
+}
+
+output "gateway_endpoint_url" {
+  description = "Gateway endpoint URL (if enabled)"
+  value       = local.gateway_enabled ? module.gateway[0].endpoint_url : null
+}
+
+output "gateway_tool_registry" {
+  description = "Map of registered tools in gateway (if enabled)"
+  value       = local.gateway_enabled ? module.gateway[0].tool_registry : {}
+}
+
+output "gateway_connection_ids" {
+  description = "Map of connection name to connection ID (if enabled)"
+  value       = local.gateway_enabled ? module.gateway[0].connection_ids : {}
+}
+
+# ------------------------------------------------------------------------------
+# TOOLS
+# ------------------------------------------------------------------------------
+output "code_interpreter_arn" {
+  description = "Code Interpreter ARN (if enabled)"
+  value       = local.tools_enabled ? module.tools[0].code_interpreter_arn : null
+}
+
+output "code_interpreter_endpoint_url" {
+  description = "Code Interpreter endpoint URL (if enabled)"
+  value       = local.tools_enabled ? module.tools[0].code_interpreter_endpoint_url : null
+}
+
+output "browser_tool_arn" {
+  description = "Browser Tool ARN (if enabled)"
+  value       = local.tools_enabled ? module.tools[0].browser_tool_arn : null
+}
+
+output "browser_tool_endpoint_url" {
+  description = "Browser Tool endpoint URL (if enabled)"
+  value       = local.tools_enabled ? module.tools[0].browser_tool_endpoint_url : null
+}
+
+output "tools_arns" {
+  description = "Map of tool name to ARN (if enabled)"
+  value       = local.tools_enabled ? module.tools[0].tools_arns : {}
 }
 
 # ------------------------------------------------------------------------------
@@ -115,37 +218,43 @@ output "firehose_arn" {
   value       = module.observability.firehose_arn
 }
 
-# ------------------------------------------------------------------------------
-# GATEWAY (Future)
-# ------------------------------------------------------------------------------
-output "gateway_endpoint" {
-  description = "Gateway endpoint URL (if enabled)"
-  value       = local.gateway_enabled ? module.gateway[0].endpoint_url : null
-}
-
-# ------------------------------------------------------------------------------
-# MEMORY (Future)
-# ------------------------------------------------------------------------------
-output "memory_endpoint" {
-  description = "Memory endpoint URL (if enabled)"
-  value       = local.memory_enabled ? module.memory[0].endpoint_url : null
+output "xray_group_arn" {
+  description = "ARN of the X-Ray sampling group"
+  value       = module.observability.xray_group_arn
 }
 
 # ------------------------------------------------------------------------------
 # SUMMARY
 # ------------------------------------------------------------------------------
 output "summary" {
-  description = "Summary of deployed resources"
+  description = "Summary of deployed AgentCore platform resources"
   value = {
     environment = var.environment
     region      = var.aws_region
     account_id  = var.aws_account_id
-    agents      = keys(var.agents)
-    nat_mode    = var.scale_profile.nat_mode
-    features = {
-      gateway = local.gateway_enabled
-      memory  = local.memory_enabled
+
+    agents = {
+      for k, v in local.agents_normalized : k => {
+        name   = v.name
+        mode   = v.mode
+        memory = v.memory_enabled
+        tools  = v.tools_enabled
+      }
     }
+
+    infrastructure = {
+      nat_mode                = var.scale_profile.nat_mode
+      vpc_endpoint_az_count   = var.scale_profile.vpc_endpoint_az_count
+      runtime_concurrency     = var.scale_profile.runtime_concurrency_limit
+    }
+
+    features = {
+      memory   = local.memory_enabled
+      identity = local.identity_enabled
+      gateway  = local.gateway_enabled
+      tools    = local.tools_enabled
+    }
+
+    endpoints = module.endpoints.endpoint_urls
   }
 }
-

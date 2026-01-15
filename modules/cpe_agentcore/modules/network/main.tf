@@ -1,6 +1,7 @@
 # ==============================================================================
 # NETWORK SUBMODULE
 # VPC endpoints, NAT gateways, and private DNS configuration
+# For Amazon Bedrock AgentCore Platform
 # ==============================================================================
 
 # ------------------------------------------------------------------------------
@@ -72,6 +73,7 @@ resource "aws_vpc_endpoint" "gateway" {
 
 # ------------------------------------------------------------------------------
 # INTERFACE VPC ENDPOINTS
+# AgentCore and AWS services
 # ------------------------------------------------------------------------------
 
 resource "aws_vpc_endpoint" "interface" {
@@ -88,23 +90,26 @@ resource "aws_vpc_endpoint" "interface" {
   security_group_ids = [var.security_group_ids.vpc_endpoints]
 
   tags = merge(var.tags, {
-    Name = "${var.name_prefix}-vpce-${each.key}"
+    Name    = "${var.name_prefix}-vpce-${each.key}"
+    Service = each.key
   })
 }
 
 # ------------------------------------------------------------------------------
 # PRIVATE HOSTED ZONE FOR AGENTCORE
+# Enables cross-account private access to AgentCore APIs
 # ------------------------------------------------------------------------------
 
 resource "aws_route53_zone" "agentcore" {
-  name = "bedrock-agent-runtime.${var.aws_region}.amazonaws.com"
+  name = "bedrock-agentcore.${var.aws_region}.amazonaws.com"
 
   vpc {
     vpc_id = var.vpc_id
   }
 
   tags = merge(var.tags, {
-    Name = "${var.name_prefix}-phz-agentcore"
+    Name    = "${var.name_prefix}-phz-agentcore"
+    Purpose = "AgentCore private DNS resolution"
   })
 
   lifecycle {
@@ -112,26 +117,69 @@ resource "aws_route53_zone" "agentcore" {
   }
 }
 
-# Alias record pointing to VPC endpoint
+# Additional private hosted zone for AgentCore runtime
+resource "aws_route53_zone" "agentcore_runtime" {
+  name = "bedrock-agentcore-runtime.${var.aws_region}.amazonaws.com"
+
+  vpc {
+    vpc_id = var.vpc_id
+  }
+
+  tags = merge(var.tags, {
+    Name    = "${var.name_prefix}-phz-agentcore-runtime"
+    Purpose = "AgentCore runtime private DNS resolution"
+  })
+
+  lifecycle {
+    ignore_changes = [vpc]
+  }
+}
+
+# Alias record for AgentCore control plane
 resource "aws_route53_record" "agentcore" {
-  count = contains(var.interface_endpoints, "bedrock-agent-runtime") ? 1 : 0
+  count = contains(var.interface_endpoints, "bedrock-agentcore") ? 1 : 0
 
   zone_id = aws_route53_zone.agentcore.zone_id
-  name    = "bedrock-agent-runtime.${var.aws_region}.amazonaws.com"
+  name    = "bedrock-agentcore.${var.aws_region}.amazonaws.com"
   type    = "A"
 
   alias {
-    name                   = aws_vpc_endpoint.interface["bedrock-agent-runtime"].dns_entry[0]["dns_name"]
-    zone_id                = aws_vpc_endpoint.interface["bedrock-agent-runtime"].dns_entry[0]["hosted_zone_id"]
+    name                   = aws_vpc_endpoint.interface["bedrock-agentcore"].dns_entry[0]["dns_name"]
+    zone_id                = aws_vpc_endpoint.interface["bedrock-agentcore"].dns_entry[0]["hosted_zone_id"]
     evaluate_target_health = true
   }
 }
 
-# Cross-account PHZ associations
-resource "aws_route53_vpc_association_authorization" "caller" {
+# Alias record for AgentCore runtime
+resource "aws_route53_record" "agentcore_runtime" {
+  count = contains(var.interface_endpoints, "bedrock-agentcore-runtime") ? 1 : 0
+
+  zone_id = aws_route53_zone.agentcore_runtime.zone_id
+  name    = "bedrock-agentcore-runtime.${var.aws_region}.amazonaws.com"
+  type    = "A"
+
+  alias {
+    name                   = aws_vpc_endpoint.interface["bedrock-agentcore-runtime"].dns_entry[0]["dns_name"]
+    zone_id                = aws_vpc_endpoint.interface["bedrock-agentcore-runtime"].dns_entry[0]["hosted_zone_id"]
+    evaluate_target_health = true
+  }
+}
+
+# ------------------------------------------------------------------------------
+# CROSS-ACCOUNT PHZ ASSOCIATIONS
+# Allow caller accounts to resolve AgentCore endpoints privately
+# ------------------------------------------------------------------------------
+
+resource "aws_route53_vpc_association_authorization" "agentcore" {
   for_each = var.cross_account_access.enabled ? var.cross_account_access.allowed_caller_vpc_ids : toset([])
 
   zone_id = aws_route53_zone.agentcore.zone_id
   vpc_id  = each.value
 }
 
+resource "aws_route53_vpc_association_authorization" "agentcore_runtime" {
+  for_each = var.cross_account_access.enabled ? var.cross_account_access.allowed_caller_vpc_ids : toset([])
+
+  zone_id = aws_route53_zone.agentcore_runtime.zone_id
+  vpc_id  = each.value
+}

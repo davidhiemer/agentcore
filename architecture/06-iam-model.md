@@ -858,3 +858,4 @@ agents = {
 - **Why**: Prevents cross-application access; limits blast radius; meets banking least-privilege requirements
 - **Why not `Resource: "*"`**: Violates least privilege; increases blast radius; audit red flag
 
+

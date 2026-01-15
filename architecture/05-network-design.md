@@ -611,3 +611,4 @@ output "private_hosted_zone_name" {
 - **Why**: Free; route table based; higher throughput; AWS recommended for these services
 - **Why not interface endpoints**: Unnecessary cost; lower throughput; no benefit for S3/DynamoDB
 
+

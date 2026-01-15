@@ -36,6 +36,8 @@ locals {
     ][0]
   }
 
+  subnet_ids_list = [for az, subnet_id in local.subnets_by_az : subnet_id]
+
   # ==============================================================================
   # NAT GATEWAY LOGIC
   # ==============================================================================
@@ -46,24 +48,36 @@ locals {
   # ==============================================================================
   # VPC ENDPOINTS CONFIGURATION
   # ==============================================================================
-  # Core AWS services requiring VPC endpoints
+  # Gateway endpoints (free, use route tables)
   required_gateway_endpoints = toset(["s3", "dynamodb"])
 
-  required_interface_endpoints = toset([
-    "bedrock-agent-runtime",
-    "bedrock-runtime",
-    "bedrock",
-    "ecr.api",
-    "ecr.dkr",
-    "logs",
-    "monitoring",
-    "secretsmanager",
-    "ssm",
-    "ssmmessages",
-    "kms",
-    "sts",
-    "xray"
-  ])
+  # Interface endpoints for AgentCore and AWS services
+  required_interface_endpoints = toset(concat(
+    # AgentCore-specific endpoints
+    [
+      "bedrock-agentcore",         # AgentCore control plane
+      "bedrock-agentcore-runtime", # AgentCore runtime invocation
+    ],
+    # Bedrock endpoints (for model invocation)
+    [
+      "bedrock-runtime",
+      "bedrock",
+    ],
+    # Core AWS services
+    [
+      "ecr.api",
+      "ecr.dkr",
+      "logs",
+      "monitoring",
+      "secretsmanager",
+      "ssm",
+      "ssmmessages",
+      "kms",
+      "sts",
+      "xray",
+      "execute-api", # For API Gateway if used
+    ]
+  ))
 
   # Limit interface endpoints to configured AZ count for cost optimization
   vpc_endpoint_subnet_ids = slice(
@@ -73,25 +87,55 @@ locals {
   )
 
   # ==============================================================================
+  # FEATURE FLAGS
+  # ==============================================================================
+  memory_enabled   = var.scale_profile.enable_memory
+  identity_enabled = var.scale_profile.enable_identity
+  gateway_enabled  = var.scale_profile.enable_gateway
+  tools_enabled    = var.scale_profile.enable_tools
+
+  # ==============================================================================
   # AGENT NORMALIZATION
   # ==============================================================================
   agents_normalized = {
-    for agent_key, agent in var.agents : agent_key => merge(agent, {
-      # Apply defaults from scale_profile if not overridden
+    for agent_key, agent in var.agents : agent_key => {
+      name        = agent.name
+      description = agent.description
+
+      # Container configuration
+      container_image_digest = agent.container_image_digest
+
+      # Runtime configuration with defaults
+      mode = agent.mode
       effective_memory_mb = coalesce(
-        agent.memory_mb_override,
-        var.scale_profile.runtime_memory_mb
+        agent.memory_mb,
+        var.scale_profile.runtime_memory_mb_default
       )
       effective_timeout_seconds = coalesce(
-        agent.timeout_seconds_override,
-        var.scale_profile.runtime_timeout_seconds
+        agent.timeout_seconds,
+        agent.mode == "realtime" ? min(var.scale_profile.runtime_timeout_seconds_default, 300) : var.scale_profile.runtime_timeout_seconds_default
       )
-      # Merge tags
+      effective_concurrency = coalesce(
+        agent.concurrency,
+        var.scale_profile.runtime_concurrency_limit
+      )
+
+      # IAM configuration
+      capability_bundles = agent.capability_bundles
+      custom_policy_arns = agent.custom_policy_arns
+
+      # Feature integration
+      memory_enabled  = agent.memory_enabled && local.memory_enabled
+      gateway_enabled = agent.gateway_enabled && local.gateway_enabled
+      tools_enabled   = agent.tools_enabled && local.tools_enabled
+
+      # Tags
       effective_tags = merge(local.common_tags, agent.additional_tags, {
         AgentName = agent.name
         AgentKey  = agent_key
+        AgentMode = agent.mode
       })
-    })
+    }
   }
 
   # ==============================================================================
@@ -106,10 +150,58 @@ locals {
   log_group_prefix = "/aws/agentcore/${var.environment}"
 
   # ==============================================================================
-  # FEATURE FLAGS
+  # MEMORY CONFIGURATION NORMALIZED
   # ==============================================================================
-  gateway_enabled = var.scale_profile.enable_gateway
-  memory_enabled  = var.scale_profile.enable_memory
+  memory_config_normalized = local.memory_enabled ? {
+    session_memory = {
+      enabled            = var.memory_config.session_memory.enabled
+      ttl_hours          = var.scale_profile.memory_session_ttl_hours
+      max_context_tokens = var.memory_config.session_memory.max_context_tokens
+    }
+    long_term_memory = {
+      enabled            = var.memory_config.long_term_memory.enabled
+      retention_days     = var.scale_profile.memory_long_term_retention_days
+      encryption_key_arn = var.memory_config.long_term_memory.encryption_key_arn
+    }
+  } : null
+
+  # ==============================================================================
+  # GATEWAY CONFIGURATION NORMALIZED
+  # ==============================================================================
+  gateway_config_normalized = local.gateway_enabled ? {
+    tool_policies = {
+      for k, v in var.gateway_config.tool_policies : k => {
+        tool_name      = v.tool_name
+        allowed_agents = v.allowed_agents
+        rate_limit = v.rate_limit != null ? v.rate_limit : {
+          requests_per_minute = var.scale_profile.gateway_rate_limit_default
+          burst_limit         = var.scale_profile.gateway_burst_limit_default
+        }
+        timeout_seconds = v.timeout_seconds
+      }
+    }
+    connections = var.gateway_config.connections
+  } : null
+
+  # ==============================================================================
+  # TOOLS CONFIGURATION NORMALIZED
+  # ==============================================================================
+  tools_config_normalized = local.tools_enabled ? {
+    code_interpreter = {
+      enabled               = var.tools_config.code_interpreter.enabled
+      languages             = var.tools_config.code_interpreter.languages
+      max_execution_seconds = var.scale_profile.code_interpreter_max_execution_seconds
+      memory_mb             = var.scale_profile.code_interpreter_memory_mb
+      allow_network         = var.tools_config.code_interpreter.allow_network
+    }
+    browser_tool = {
+      enabled            = var.tools_config.browser_tool.enabled
+      allowed_domains    = var.tools_config.browser_tool.allowed_domains
+      blocked_domains    = var.tools_config.browser_tool.blocked_domains
+      max_page_size_mb   = var.scale_profile.browser_max_page_size_mb
+      screenshot_enabled = var.tools_config.browser_tool.screenshot_enabled
+    }
+  } : null
 
   # ==============================================================================
   # ENVIRONMENT INVARIANT VALIDATIONS
@@ -135,5 +227,9 @@ locals {
   _validate_prod_endpoint_ha = var.environment == "prod" ? (
     var.scale_profile.vpc_endpoint_az_count >= 2 ? true : tobool("ERROR: Production VPC endpoints must span at least 2 AZs")
   ) : true
-}
 
+  # Production memory retention MUST be at least 90 days
+  _validate_prod_memory_retention = var.environment == "prod" && local.memory_enabled ? (
+    var.scale_profile.memory_long_term_retention_days >= 90 ? true : tobool("ERROR: Production memory retention must be at least 90 days")
+  ) : true
+}

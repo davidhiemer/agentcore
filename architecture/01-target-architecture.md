@@ -191,3 +191,4 @@ flowchart LR
 - **Why**: Least privilege; per-agent audit trail; capability isolation; enables per-agent permission boundaries
 - **Why not shared role**: Violates least privilege; shared blast radius; impossible to audit per-agent actions
 
+

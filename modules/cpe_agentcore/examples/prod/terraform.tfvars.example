@@ -1,5 +1,6 @@
 # ==============================================================================
 # PROD ENVIRONMENT CONFIGURATION
+# Amazon Bedrock AgentCore Platform
 # ==============================================================================
 
 environment    = "prod"
@@ -53,27 +54,39 @@ vpc_config = {
 # SCALE PROFILE - Prod (Full capacity, full HA)
 # ==============================================================================
 scale_profile = {
-  # Network - full HA, all AZs
+  # Network - full HA, all AZs (REQUIRED for prod)
   nat_mode              = "per_az"
   vpc_endpoint_az_count = 3
 
   # Runtime - full production capacity
-  runtime_concurrency_limit = 1000
-  runtime_memory_mb         = 4096
-  runtime_timeout_seconds   = 300
+  runtime_concurrency_limit       = 1000
+  runtime_memory_mb_default       = 4096
+  runtime_timeout_seconds_default = 300
+
+  # Memory - full retention for compliance
+  memory_session_ttl_hours        = 168  # 1 week
+  memory_long_term_retention_days = 365  # 1 year for audit
+
+  # Gateway - production limits
+  gateway_rate_limit_default  = 10000
+  gateway_burst_limit_default = 1000
+
+  # Tools - production resources
+  code_interpreter_max_execution_seconds = 120
+  code_interpreter_memory_mb             = 1024
+  browser_max_page_size_mb               = 50
 
   # Observability - full audit retention (regulatory requirement)
-  log_retention_days         = 365
-  metrics_resolution_seconds = 1  # High resolution metrics
+  log_retention_days         = 365  # REQUIRED: 1 year for audit
+  metrics_resolution_seconds = 1    # High resolution metrics
   alarm_evaluation_periods   = 5
+  xray_sampling_rate         = 0.01 # Lower sampling in prod
 
-  # Tool execution - production limits
-  tool_execution_timeout_seconds = 120
-  tool_max_concurrent_executions = 50
-
-  # Feature flags - conservative, only enable after thorough testing
-  enable_gateway = false
-  enable_memory  = false
+  # Feature flags - enable after thorough preprod testing
+  enable_memory   = true
+  enable_identity = true
+  enable_gateway  = true
+  enable_tools    = false  # Disabled until security review complete
 }
 
 # ==============================================================================
@@ -84,16 +97,26 @@ agents = {
     name        = "Customer Support Agent"
     description = "Handles customer inquiries and support requests"
 
-    runtime_version_digest = "sha256:a1b2c3d4e5f6789012345678901234567890abcdef1234567890abcdef123456"
+    container_image_digest = "sha256:a1b2c3d4e5f6789012345678901234567890abcdef1234567890abcdef123456"
+
+    mode        = "realtime"
+    concurrency = 500  # Per-agent limit
 
     capability_bundles = [
       "baseline",
       "dynamodb_readonly",
-      "bedrock_invoke_model"
+      "bedrock_invoke_model",
+      "agentcore_memory",
+      "agentcore_gateway"
     ]
 
+    memory_enabled  = true
+    gateway_enabled = true
+    tools_enabled   = false
+
     additional_tags = {
-      Team = "customer-experience"
+      Team       = "customer-experience"
+      Criticality = "high"
     }
   }
 
@@ -101,20 +124,149 @@ agents = {
     name        = "Data Analyst Agent"
     description = "Analyzes data and generates reports"
 
-    runtime_version_digest = "sha256:b2c3d4e5f67890123456789012345678901abcdef1234567890abcdef1234567"
+    container_image_digest = "sha256:b2c3d4e5f67890123456789012345678901abcdef1234567890abcdef1234567"
+
+    mode            = "async"
+    timeout_seconds = 14400  # 4 hours for complex analysis
+    memory_mb       = 4096
+    concurrency     = 100
 
     capability_bundles = [
       "baseline",
       "s3_readwrite",
       "dynamodb_readonly",
-      "bedrock_invoke_model"
+      "bedrock_invoke_model",
+      "agentcore_memory"
     ]
 
-    memory_mb_override = 4096
+    memory_enabled  = true
+    gateway_enabled = true
+    tools_enabled   = false
 
     additional_tags = {
-      Team = "data-engineering"
+      Team       = "data-engineering"
+      Criticality = "medium"
     }
+  }
+}
+
+# ==============================================================================
+# MEMORY CONFIGURATION
+# ==============================================================================
+memory_config = {
+  session_memory = {
+    enabled            = true
+    max_context_tokens = 200000  # Maximum for production
+  }
+
+  long_term_memory = {
+    enabled            = true
+    encryption_key_arn = "arn:aws:kms:us-east-1:333333333333:key/prod-memory-key"
+  }
+}
+
+# ==============================================================================
+# IDENTITY CONFIGURATION (Entra ID for production)
+# ==============================================================================
+identity_config = {
+  enabled = true
+
+  provider = {
+    type              = "entra_id"
+    issuer_url        = "https://login.microsoftonline.com/your-tenant-id/v2.0"
+    client_id         = "your-client-id"
+    client_secret_arn = "arn:aws:secretsmanager:us-east-1:333333333333:secret:agentcore/entra-client-secret"
+  }
+
+  role_mappings = {
+    "support-team" = {
+      claim_name  = "groups"
+      claim_value = "support-team-group-id"
+      agent_keys  = ["customer-support"]
+    }
+    "data-team" = {
+      claim_name  = "groups"
+      claim_value = "data-team-group-id"
+      agent_keys  = ["data-analyst"]
+    }
+    "admin-team" = {
+      claim_name  = "groups"
+      claim_value = "admin-group-id"
+      agent_keys  = ["customer-support", "data-analyst"]
+    }
+  }
+}
+
+# ==============================================================================
+# GATEWAY CONFIGURATION
+# ==============================================================================
+gateway_config = {
+  tool_policies = {
+    "weather-api" = {
+      tool_name      = "get_weather"
+      allowed_agents = ["customer-support"]
+      rate_limit = {
+        requests_per_minute = 2000
+        burst_limit         = 400
+      }
+      timeout_seconds = 15
+    }
+    "search-api" = {
+      tool_name      = "search_documents"
+      allowed_agents = ["data-analyst", "customer-support"]
+      rate_limit = {
+        requests_per_minute = 5000
+        burst_limit         = 1000
+      }
+      timeout_seconds = 30
+    }
+    "crm-api" = {
+      tool_name      = "crm_lookup"
+      allowed_agents = ["customer-support"]
+      rate_limit = {
+        requests_per_minute = 1000
+        burst_limit         = 200
+      }
+      timeout_seconds = 20
+    }
+  }
+
+  connections = {
+    "external-weather" = {
+      name         = "External Weather API"
+      endpoint_url = "https://api.weather.example.com"
+      auth_type    = "api_key"
+      secret_arn   = "arn:aws:secretsmanager:us-east-1:333333333333:secret:gateway/weather-api-key"
+    }
+    "internal-search" = {
+      name         = "Internal Search Service"
+      endpoint_url = "https://search.internal.example.com"
+      auth_type    = "iam"
+    }
+    "crm-system" = {
+      name         = "CRM System"
+      endpoint_url = "https://crm.internal.example.com"
+      auth_type    = "oauth"
+      secret_arn   = "arn:aws:secretsmanager:us-east-1:333333333333:secret:gateway/crm-oauth"
+    }
+  }
+}
+
+# ==============================================================================
+# TOOLS CONFIGURATION (Disabled for production - security review pending)
+# ==============================================================================
+tools_config = {
+  code_interpreter = {
+    enabled       = false
+    languages     = ["python"]
+    allow_network = false
+  }
+
+  browser_tool = {
+    enabled            = false
+    allowed_domains    = []
+    blocked_domains    = []
+    screenshot_enabled = false
   }
 }
 
@@ -160,5 +312,5 @@ tags = {
   Application = "agentcore"
   Owner       = "platform-team"
   Compliance  = "sox-pci"
+  Environment = "production"
 }
-

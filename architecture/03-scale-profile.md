@@ -422,3 +422,4 @@ main = rule {
 - **Why**: Keeps all environment config together; prevents separate feature flag variables; clear audit trail
 - **Why not separate variables**: Fragments configuration; harder to reason about environment state
 
+

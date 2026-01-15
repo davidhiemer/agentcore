@@ -1,5 +1,6 @@
 # ==============================================================================
 # PREPROD ENVIRONMENT CONFIGURATION
+# Amazon Bedrock AgentCore Platform
 # ==============================================================================
 
 environment    = "preprod"
@@ -54,26 +55,38 @@ vpc_config = {
 # ==============================================================================
 scale_profile = {
   # Network - production-like HA configuration
-  nat_mode              = "per_az"
+  nat_mode              = "per_az"  # Must match prod
   vpc_endpoint_az_count = 2
 
   # Runtime - production-like capacity, slightly lower limits
-  runtime_concurrency_limit = 100
-  runtime_memory_mb         = 2048
-  runtime_timeout_seconds   = 300
+  runtime_concurrency_limit       = 100
+  runtime_memory_mb_default       = 2048
+  runtime_timeout_seconds_default = 300
+
+  # Memory - production-like retention
+  memory_session_ttl_hours        = 48
+  memory_long_term_retention_days = 90
+
+  # Gateway - production-like limits
+  gateway_rate_limit_default  = 5000
+  gateway_burst_limit_default = 500
+
+  # Tools - production-like resources
+  code_interpreter_max_execution_seconds = 60
+  code_interpreter_memory_mb             = 512
+  browser_max_page_size_mb               = 25
 
   # Observability - production-like retention
   log_retention_days         = 180
   metrics_resolution_seconds = 60
   alarm_evaluation_periods   = 3
-
-  # Tool execution - production-like limits
-  tool_execution_timeout_seconds = 60
-  tool_max_concurrent_executions = 20
+  xray_sampling_rate         = 0.05
 
   # Feature flags - match production (conservative)
-  enable_gateway = false
-  enable_memory  = false
+  enable_memory   = true
+  enable_identity = true
+  enable_gateway  = true
+  enable_tools    = false  # Disabled until prod-ready
 }
 
 # ==============================================================================
@@ -84,13 +97,21 @@ agents = {
     name        = "Customer Support Agent"
     description = "Handles customer inquiries and support requests"
 
-    runtime_version_digest = "sha256:a1b2c3d4e5f6789012345678901234567890abcdef1234567890abcdef123456"
+    container_image_digest = "sha256:a1b2c3d4e5f6789012345678901234567890abcdef1234567890abcdef123456"
+
+    mode = "realtime"
 
     capability_bundles = [
       "baseline",
       "dynamodb_readonly",
-      "bedrock_invoke_model"
+      "bedrock_invoke_model",
+      "agentcore_memory",
+      "agentcore_gateway"
     ]
+
+    memory_enabled  = true
+    gateway_enabled = true
+    tools_enabled   = false
 
     additional_tags = {
       Team = "customer-experience"
@@ -101,20 +122,123 @@ agents = {
     name        = "Data Analyst Agent"
     description = "Analyzes data and generates reports"
 
-    runtime_version_digest = "sha256:b2c3d4e5f67890123456789012345678901abcdef1234567890abcdef1234567"
+    container_image_digest = "sha256:b2c3d4e5f67890123456789012345678901abcdef1234567890abcdef1234567"
+
+    mode            = "async"
+    timeout_seconds = 7200  # 2 hours
+    memory_mb       = 2048
 
     capability_bundles = [
       "baseline",
       "s3_readwrite",
       "dynamodb_readonly",
-      "bedrock_invoke_model"
+      "bedrock_invoke_model",
+      "agentcore_memory"
     ]
 
-    memory_mb_override = 2048
+    memory_enabled  = true
+    gateway_enabled = true
+    tools_enabled   = false
 
     additional_tags = {
       Team = "data-engineering"
     }
+  }
+}
+
+# ==============================================================================
+# MEMORY CONFIGURATION
+# ==============================================================================
+memory_config = {
+  session_memory = {
+    enabled            = true
+    max_context_tokens = 100000
+  }
+
+  long_term_memory = {
+    enabled            = true
+    encryption_key_arn = "arn:aws:kms:us-east-1:222222222222:key/preprod-memory-key"
+  }
+}
+
+# ==============================================================================
+# IDENTITY CONFIGURATION (Cognito for preprod testing)
+# ==============================================================================
+identity_config = {
+  enabled = true
+
+  provider = {
+    type = "cognito"
+  }
+
+  role_mappings = {
+    "support-team" = {
+      claim_name  = "cognito:groups"
+      claim_value = "SupportTeam"
+      agent_keys  = ["customer-support"]
+    }
+    "data-team" = {
+      claim_name  = "cognito:groups"
+      claim_value = "DataTeam"
+      agent_keys  = ["data-analyst"]
+    }
+  }
+}
+
+# ==============================================================================
+# GATEWAY CONFIGURATION
+# ==============================================================================
+gateway_config = {
+  tool_policies = {
+    "weather-api" = {
+      tool_name      = "get_weather"
+      allowed_agents = ["customer-support"]
+      rate_limit = {
+        requests_per_minute = 500
+        burst_limit         = 100
+      }
+      timeout_seconds = 15
+    }
+    "search-api" = {
+      tool_name      = "search_documents"
+      allowed_agents = ["data-analyst", "customer-support"]
+      rate_limit = {
+        requests_per_minute = 1000
+        burst_limit         = 200
+      }
+      timeout_seconds = 30
+    }
+  }
+
+  connections = {
+    "external-weather" = {
+      name         = "External Weather API"
+      endpoint_url = "https://api.weather.example.com"
+      auth_type    = "api_key"
+    }
+    "internal-search" = {
+      name         = "Internal Search Service"
+      endpoint_url = "https://search.internal.example.com"
+      auth_type    = "iam"
+    }
+  }
+}
+
+# ==============================================================================
+# TOOLS CONFIGURATION (Disabled for preprod)
+# ==============================================================================
+tools_config = {
+  code_interpreter = {
+    enabled       = false
+    languages     = ["python"]
+    allow_network = false
+  }
+
+  browser_tool = {
+    enabled            = false
+    allowed_domains    = []
+    blocked_domains    = []
+    screenshot_enabled = false
   }
 }
 
@@ -155,4 +279,3 @@ tags = {
   Application = "agentcore"
   Owner       = "platform-team"
 }
-

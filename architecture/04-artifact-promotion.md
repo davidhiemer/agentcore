@@ -801,3 +801,4 @@ resource "aws_s3_bucket_lifecycle_configuration" "audit_evidence" {
 - **Why**: Durable; auditable; searchable; integrates with existing compliance tools; S3 Object Lock available
 - **Why not CloudWatch/CloudTrail alone**: Harder to query; log retention limits; not optimized for structured evidence
 
+

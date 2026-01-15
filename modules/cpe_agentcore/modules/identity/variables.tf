@@ -13,19 +13,32 @@ variable "aws_region" {
   type        = string
 }
 
-variable "memory_config" {
-  description = "Memory configuration"
+variable "identity_config" {
+  description = "Identity provider configuration"
   type = object({
-    session_memory = object({
-      enabled            = bool
-      ttl_hours          = number
-      max_context_tokens = number
+    enabled = bool
+
+    provider = object({
+      type = string # "cognito", "entra_id", "okta", "saml"
+
+      # Cognito-specific
+      user_pool_id     = optional(string)
+      user_pool_client = optional(string)
+
+      # OIDC-specific (Entra, Okta)
+      issuer_url        = optional(string)
+      client_id         = optional(string)
+      client_secret_arn = optional(string)
+
+      # SAML-specific
+      metadata_url = optional(string)
     })
-    long_term_memory = object({
-      enabled            = bool
-      retention_days     = number
-      encryption_key_arn = string
-    })
+
+    role_mappings = map(object({
+      claim_name  = string
+      claim_value = string
+      agent_keys  = set(string)
+    }))
   })
 }
 
@@ -48,27 +61,8 @@ variable "agents" {
   }))
 }
 
-variable "vpc_id" {
-  description = "VPC ID for VPC endpoint (if needed)"
-  type        = string
-}
-
-variable "subnet_ids" {
-  description = "Subnet IDs for VPC attachment"
-  type        = list(string)
-}
-
-variable "execution_role_arns" {
-  description = "Map of agent key to execution role ARN"
-  type        = map(string)
-}
-
-variable "runtime_ids" {
-  description = "Map of agent key to runtime ID"
-  type        = map(string)
-}
-
 variable "tags" {
   description = "Tags to apply to resources"
   type        = map(string)
 }
+

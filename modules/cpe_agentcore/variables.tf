@@ -70,31 +70,44 @@ variable "vpc_config" {
 # ==============================================================================
 
 variable "scale_profile" {
-  description = "Environment-specific scaling configuration"
+  description = "Environment-specific scaling configuration for all AgentCore components"
   type = object({
     # Network scaling
-    nat_mode              = string
-    vpc_endpoint_az_count = number
+    nat_mode              = string # "per_az" or "single"
+    vpc_endpoint_az_count = number # 1-3
 
     # Runtime scaling
-    runtime_concurrency_limit = number
-    runtime_memory_mb         = number
-    runtime_timeout_seconds   = number
+    runtime_concurrency_limit       = number
+    runtime_memory_mb_default       = number
+    runtime_timeout_seconds_default = number
+
+    # Memory scaling
+    memory_session_ttl_hours        = number
+    memory_long_term_retention_days = number
+
+    # Gateway scaling
+    gateway_rate_limit_default  = number
+    gateway_burst_limit_default = number
+
+    # Tools scaling
+    code_interpreter_max_execution_seconds = number
+    code_interpreter_memory_mb             = number
+    browser_max_page_size_mb               = number
 
     # Observability scaling
     log_retention_days         = number
     metrics_resolution_seconds = number
     alarm_evaluation_periods   = number
+    xray_sampling_rate         = number # 0.0-1.0
 
-    # Tool execution scaling
-    tool_execution_timeout_seconds = number
-    tool_max_concurrent_executions = number
-
-    # Feature flags for future capabilities
-    enable_gateway = bool
-    enable_memory  = bool
+    # Feature flags
+    enable_memory   = bool
+    enable_identity = bool
+    enable_gateway  = bool
+    enable_tools    = bool
   })
 
+  # Network validations
   validation {
     condition     = contains(["per_az", "single"], var.scale_profile.nat_mode)
     error_message = "NAT mode must be 'per_az' or 'single'."
@@ -105,26 +118,66 @@ variable "scale_profile" {
     error_message = "VPC endpoint AZ count must be between 1 and 3."
   }
 
+  # Runtime validations
   validation {
     condition     = var.scale_profile.runtime_concurrency_limit >= 1 && var.scale_profile.runtime_concurrency_limit <= 10000
     error_message = "Runtime concurrency limit must be between 1 and 10000."
   }
 
   validation {
-    condition     = var.scale_profile.runtime_memory_mb >= 128 && var.scale_profile.runtime_memory_mb <= 10240
-    error_message = "Runtime memory must be between 128 and 10240 MB."
+    condition     = var.scale_profile.runtime_memory_mb_default >= 512 && var.scale_profile.runtime_memory_mb_default <= 10240
+    error_message = "Runtime memory must be between 512 and 10240 MB."
   }
 
   validation {
-    condition     = var.scale_profile.runtime_memory_mb % 64 == 0
+    condition     = var.scale_profile.runtime_memory_mb_default % 64 == 0
     error_message = "Runtime memory must be a multiple of 64 MB."
   }
 
   validation {
-    condition     = var.scale_profile.runtime_timeout_seconds >= 1 && var.scale_profile.runtime_timeout_seconds <= 900
-    error_message = "Runtime timeout must be between 1 and 900 seconds."
+    condition     = var.scale_profile.runtime_timeout_seconds_default >= 1 && var.scale_profile.runtime_timeout_seconds_default <= 28800
+    error_message = "Runtime timeout must be between 1 and 28800 seconds (8 hours for async)."
   }
 
+  # Memory validations
+  validation {
+    condition     = var.scale_profile.memory_session_ttl_hours >= 1 && var.scale_profile.memory_session_ttl_hours <= 168
+    error_message = "Memory session TTL must be between 1 and 168 hours (1 week)."
+  }
+
+  validation {
+    condition     = var.scale_profile.memory_long_term_retention_days >= 30 && var.scale_profile.memory_long_term_retention_days <= 365
+    error_message = "Memory long-term retention must be between 30 and 365 days."
+  }
+
+  # Gateway validations
+  validation {
+    condition     = var.scale_profile.gateway_rate_limit_default >= 1 && var.scale_profile.gateway_rate_limit_default <= 10000
+    error_message = "Gateway rate limit must be between 1 and 10000 requests per minute."
+  }
+
+  validation {
+    condition     = var.scale_profile.gateway_burst_limit_default >= 1 && var.scale_profile.gateway_burst_limit_default <= 5000
+    error_message = "Gateway burst limit must be between 1 and 5000."
+  }
+
+  # Tools validations
+  validation {
+    condition     = var.scale_profile.code_interpreter_max_execution_seconds >= 1 && var.scale_profile.code_interpreter_max_execution_seconds <= 300
+    error_message = "Code interpreter max execution must be between 1 and 300 seconds."
+  }
+
+  validation {
+    condition     = var.scale_profile.code_interpreter_memory_mb >= 128 && var.scale_profile.code_interpreter_memory_mb <= 4096
+    error_message = "Code interpreter memory must be between 128 and 4096 MB."
+  }
+
+  validation {
+    condition     = var.scale_profile.browser_max_page_size_mb >= 1 && var.scale_profile.browser_max_page_size_mb <= 50
+    error_message = "Browser max page size must be between 1 and 50 MB."
+  }
+
+  # Observability validations
   validation {
     condition     = var.scale_profile.log_retention_days >= 30
     error_message = "Log retention must be at least 30 days for audit requirements."
@@ -149,13 +202,8 @@ variable "scale_profile" {
   }
 
   validation {
-    condition     = var.scale_profile.tool_execution_timeout_seconds >= 1 && var.scale_profile.tool_execution_timeout_seconds <= 300
-    error_message = "Tool execution timeout must be between 1 and 300 seconds."
-  }
-
-  validation {
-    condition     = var.scale_profile.tool_max_concurrent_executions >= 1 && var.scale_profile.tool_max_concurrent_executions <= 100
-    error_message = "Tool max concurrent executions must be between 1 and 100."
+    condition     = var.scale_profile.xray_sampling_rate >= 0 && var.scale_profile.xray_sampling_rate <= 1
+    error_message = "X-Ray sampling rate must be between 0.0 and 1.0."
   }
 }
 
@@ -169,8 +217,14 @@ variable "agents" {
     name        = string
     description = string
 
+    # Container configuration
+    container_image_digest = string # sha256:... from ECR
+
     # Runtime configuration
-    runtime_version_digest = string
+    mode            = optional(string, "realtime") # "realtime" or "async"
+    timeout_seconds = optional(number)             # Override default
+    memory_mb       = optional(number)             # Override default
+    concurrency     = optional(number)             # Per-agent concurrency limit
 
     # IAM capability bundles
     capability_bundles = set(string)
@@ -178,9 +232,10 @@ variable "agents" {
     # Custom IAM policies (optional)
     custom_policy_arns = optional(set(string), [])
 
-    # Resource limits (optional overrides)
-    memory_mb_override       = optional(number)
-    timeout_seconds_override = optional(number)
+    # Feature integration
+    memory_enabled  = optional(bool, true)
+    gateway_enabled = optional(bool, true)
+    tools_enabled   = optional(bool, false)
 
     # Tags specific to this agent
     additional_tags = optional(map(string), {})
@@ -188,9 +243,30 @@ variable "agents" {
 
   validation {
     condition = alltrue([
-      for k, v in var.agents : can(regex("^sha256:[a-f0-9]{64}$", v.runtime_version_digest))
+      for k, v in var.agents : can(regex("^sha256:[a-f0-9]{64}$", v.container_image_digest))
     ])
-    error_message = "All agent runtime_version_digest values must be valid SHA256 digests."
+    error_message = "All agent container_image_digest values must be valid SHA256 digests."
+  }
+
+  validation {
+    condition = alltrue([
+      for k, v in var.agents : contains(["realtime", "async"], v.mode)
+    ])
+    error_message = "Agent mode must be 'realtime' or 'async'."
+  }
+
+  validation {
+    condition = alltrue([
+      for k, v in var.agents : v.mode == "realtime" ? (v.timeout_seconds == null || v.timeout_seconds <= 300) : true
+    ])
+    error_message = "Realtime agents must have timeout <= 300 seconds."
+  }
+
+  validation {
+    condition = alltrue([
+      for k, v in var.agents : v.mode == "async" ? (v.timeout_seconds == null || v.timeout_seconds <= 28800) : true
+    ])
+    error_message = "Async agents must have timeout <= 28800 seconds (8 hours)."
   }
 
   validation {
@@ -208,11 +284,177 @@ variable "agents" {
           "sns_publish",
           "sqs_send_receive",
           "lambda_invoke",
-          "bedrock_invoke_model"
+          "bedrock_invoke_model",
+          "agentcore_memory",
+          "agentcore_gateway",
+          "agentcore_tools"
         ], bundle)
       ])
     ])
     error_message = "Invalid capability bundle specified. Check allowed bundles."
+  }
+}
+
+# ==============================================================================
+# MEMORY CONFIGURATION
+# ==============================================================================
+
+variable "memory_config" {
+  description = "AgentCore Memory configuration"
+  type = object({
+    session_memory = object({
+      enabled            = bool
+      max_context_tokens = optional(number, 100000)
+    })
+
+    long_term_memory = object({
+      enabled            = bool
+      encryption_key_arn = optional(string) # KMS key ARN, null = AWS managed
+    })
+  })
+
+  default = {
+    session_memory = {
+      enabled            = true
+      max_context_tokens = 100000
+    }
+    long_term_memory = {
+      enabled            = true
+      encryption_key_arn = null
+    }
+  }
+
+  validation {
+    condition     = var.memory_config.session_memory.max_context_tokens >= 1000 && var.memory_config.session_memory.max_context_tokens <= 200000
+    error_message = "Max context tokens must be between 1000 and 200000."
+  }
+}
+
+# ==============================================================================
+# IDENTITY CONFIGURATION
+# ==============================================================================
+
+variable "identity_config" {
+  description = "AgentCore Identity configuration for IdP integration"
+  type = object({
+    enabled = bool
+
+    provider = optional(object({
+      type = string # "cognito", "entra_id", "okta", "saml"
+
+      # Cognito-specific
+      user_pool_id     = optional(string)
+      user_pool_client = optional(string)
+
+      # OIDC-specific (Entra, Okta)
+      issuer_url        = optional(string)
+      client_id         = optional(string)
+      client_secret_arn = optional(string) # Secrets Manager ARN
+
+      # SAML-specific
+      metadata_url = optional(string)
+    }))
+
+    role_mappings = optional(map(object({
+      claim_name  = string
+      claim_value = string
+      agent_keys  = set(string)
+    })), {})
+  })
+
+  default = {
+    enabled       = false
+    provider      = null
+    role_mappings = {}
+  }
+
+  validation {
+    condition = var.identity_config.enabled == false || (
+      var.identity_config.provider != null &&
+      contains(["cognito", "entra_id", "okta", "saml"], var.identity_config.provider.type)
+    )
+    error_message = "When identity is enabled, provider type must be one of: cognito, entra_id, okta, saml."
+  }
+}
+
+# ==============================================================================
+# GATEWAY CONFIGURATION
+# ==============================================================================
+
+variable "gateway_config" {
+  description = "AgentCore Gateway configuration for tool governance"
+  type = object({
+    tool_policies = optional(map(object({
+      tool_name      = string
+      allowed_agents = set(string)
+      rate_limit = optional(object({
+        requests_per_minute = number
+        burst_limit         = number
+      }))
+      timeout_seconds = optional(number, 30)
+    })), {})
+
+    connections = optional(map(object({
+      name         = string
+      endpoint_url = string
+      auth_type    = string # "api_key", "oauth", "iam", "none"
+      secret_arn   = optional(string)
+    })), {})
+  })
+
+  default = {
+    tool_policies = {}
+    connections   = {}
+  }
+
+  validation {
+    condition = alltrue([
+      for k, v in var.gateway_config.connections : contains(["api_key", "oauth", "iam", "none"], v.auth_type)
+    ])
+    error_message = "Connection auth_type must be one of: api_key, oauth, iam, none."
+  }
+}
+
+# ==============================================================================
+# TOOLS CONFIGURATION
+# ==============================================================================
+
+variable "tools_config" {
+  description = "AgentCore Tools configuration (Code Interpreter, Browser Tool)"
+  type = object({
+    code_interpreter = object({
+      enabled       = bool
+      languages     = optional(set(string), ["python"])
+      allow_network = optional(bool, false)
+    })
+
+    browser_tool = object({
+      enabled            = bool
+      allowed_domains    = optional(set(string), [])
+      blocked_domains    = optional(set(string), [])
+      screenshot_enabled = optional(bool, true)
+    })
+  })
+
+  default = {
+    code_interpreter = {
+      enabled       = false
+      languages     = ["python"]
+      allow_network = false
+    }
+    browser_tool = {
+      enabled            = false
+      allowed_domains    = []
+      blocked_domains    = []
+      screenshot_enabled = true
+    }
+  }
+
+  validation {
+    condition = alltrue([
+      for lang in var.tools_config.code_interpreter.languages : contains(["python", "nodejs", "bash"], lang)
+    ])
+    error_message = "Code interpreter languages must be one of: python, nodejs, bash."
   }
 }
 
@@ -225,7 +467,7 @@ variable "cross_account_access" {
   type = object({
     enabled                 = bool
     allowed_caller_accounts = set(string)
-    allowed_caller_roles    = map(set(string))
+    allowed_caller_roles    = map(set(string)) # account_id -> role ARNs
     allowed_caller_vpc_ids  = optional(set(string), [])
   })
 
@@ -290,4 +532,3 @@ variable "tags" {
     error_message = "Tag keys must contain only valid AWS tag characters."
   }
 }
-

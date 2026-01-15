@@ -1,12 +1,14 @@
 # ==============================================================================
 # IAM SUBMODULE
 # Execution roles, capability bundles, and permission boundaries
+# For Amazon Bedrock AgentCore Platform
 # ==============================================================================
 
 data "aws_caller_identity" "current" {}
 
 # ------------------------------------------------------------------------------
 # PERMISSION BOUNDARY
+# Defines the maximum permissions any agent execution role can have
 # ------------------------------------------------------------------------------
 
 resource "aws_iam_policy" "permission_boundary" {
@@ -18,10 +20,9 @@ resource "aws_iam_policy" "permission_boundary" {
     Statement = [
       # Allowed actions (maximum envelope)
       {
-        Sid    = "AllowedServices"
+        Sid    = "AllowedObservability"
         Effect = "Allow"
         Action = [
-          # Observability
           "logs:CreateLogStream",
           "logs:PutLogEvents",
           "logs:DescribeLogStreams",
@@ -29,9 +30,14 @@ resource "aws_iam_policy" "permission_boundary" {
           "xray:PutTraceSegments",
           "xray:PutTelemetryRecords",
           "xray:GetSamplingRules",
-          "xray:GetSamplingTargets",
-
-          # Storage
+          "xray:GetSamplingTargets"
+        ]
+        Resource = "*"
+      },
+      {
+        Sid    = "AllowedStorage"
+        Effect = "Allow"
+        Action = [
           "s3:GetObject",
           "s3:GetObjectVersion",
           "s3:GetObjectTagging",
@@ -39,9 +45,14 @@ resource "aws_iam_policy" "permission_boundary" {
           "s3:PutObjectTagging",
           "s3:DeleteObject",
           "s3:ListBucket",
-          "s3:GetBucketLocation",
-
-          # Database
+          "s3:GetBucketLocation"
+        ]
+        Resource = "*"
+      },
+      {
+        Sid    = "AllowedDatabase"
+        Effect = "Allow"
+        Action = [
           "dynamodb:GetItem",
           "dynamodb:BatchGetItem",
           "dynamodb:Query",
@@ -50,36 +61,73 @@ resource "aws_iam_policy" "permission_boundary" {
           "dynamodb:UpdateItem",
           "dynamodb:DeleteItem",
           "dynamodb:BatchWriteItem",
-          "dynamodb:DescribeTable",
-
-          # Secrets
+          "dynamodb:DescribeTable"
+        ]
+        Resource = "*"
+      },
+      {
+        Sid    = "AllowedSecrets"
+        Effect = "Allow"
+        Action = [
           "secretsmanager:GetSecretValue",
           "secretsmanager:DescribeSecret",
           "ssm:GetParameter",
           "ssm:GetParameters",
-          "ssm:GetParametersByPath",
-
-          # Encryption
+          "ssm:GetParametersByPath"
+        ]
+        Resource = "*"
+      },
+      {
+        Sid    = "AllowedEncryption"
+        Effect = "Allow"
+        Action = [
           "kms:Encrypt",
           "kms:Decrypt",
           "kms:GenerateDataKey",
           "kms:GenerateDataKeyWithoutPlaintext",
-          "kms:DescribeKey",
-
-          # Messaging
+          "kms:DescribeKey"
+        ]
+        Resource = "*"
+      },
+      {
+        Sid    = "AllowedMessaging"
+        Effect = "Allow"
+        Action = [
           "sns:Publish",
           "sqs:SendMessage",
           "sqs:ReceiveMessage",
           "sqs:DeleteMessage",
           "sqs:GetQueueAttributes",
-          "sqs:GetQueueUrl",
-
-          # Compute
-          "lambda:InvokeFunction",
-
-          # AI
+          "sqs:GetQueueUrl"
+        ]
+        Resource = "*"
+      },
+      {
+        Sid    = "AllowedCompute"
+        Effect = "Allow"
+        Action = [
+          "lambda:InvokeFunction"
+        ]
+        Resource = "*"
+      },
+      {
+        Sid    = "AllowedAI"
+        Effect = "Allow"
+        Action = [
           "bedrock:InvokeModel",
-          "bedrock:InvokeModelWithResponseStream"
+          "bedrock:InvokeModelWithResponseStream",
+          "bedrock-agentcore:*"
+        ]
+        Resource = "*"
+      },
+      {
+        Sid    = "AllowedECR"
+        Effect = "Allow"
+        Action = [
+          "ecr:GetAuthorizationToken",
+          "ecr:BatchCheckLayerAvailability",
+          "ecr:GetDownloadUrlForLayer",
+          "ecr:BatchGetImage"
         ]
         Resource = "*"
       },
@@ -144,6 +192,7 @@ resource "aws_iam_policy" "permission_boundary" {
 
 # ------------------------------------------------------------------------------
 # EXECUTION ROLES (One per agent)
+# Each agent gets its own execution role for least privilege
 # ------------------------------------------------------------------------------
 
 resource "aws_iam_role" "agent_execution" {
@@ -155,7 +204,26 @@ resource "aws_iam_role" "agent_execution" {
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
+      # AgentCore Runtime service principal
       {
+        Sid    = "AgentCoreRuntimeAssume"
+        Effect = "Allow"
+        Principal = {
+          Service = "bedrock-agentcore.amazonaws.com"
+        }
+        Action = "sts:AssumeRole"
+        Condition = {
+          StringEquals = {
+            "aws:SourceAccount" = var.aws_account_id
+          }
+          ArnLike = {
+            "aws:SourceArn" = "arn:aws:bedrock-agentcore:${var.aws_region}:${var.aws_account_id}:runtime/*"
+          }
+        }
+      },
+      # Legacy Bedrock service principal (for compatibility)
+      {
+        Sid    = "BedrockAssume"
         Effect = "Allow"
         Principal = {
           Service = "bedrock.amazonaws.com"
@@ -165,22 +233,17 @@ resource "aws_iam_role" "agent_execution" {
           StringEquals = {
             "aws:SourceAccount" = var.aws_account_id
           }
-          ArnLike = {
-            "aws:SourceArn" = "arn:aws:bedrock:${var.aws_region}:${var.aws_account_id}:agent/*"
-          }
         }
       }
     ]
   })
 
-  tags = merge(var.tags, {
-    AgentName = each.value.name
-    AgentKey  = each.key
-  })
+  tags = merge(var.tags, each.value.effective_tags)
 }
 
 # ------------------------------------------------------------------------------
 # CAPABILITY BUNDLES
+# Modular policies that can be attached to agent roles
 # ------------------------------------------------------------------------------
 
 resource "aws_iam_policy" "capability_bundle" {
@@ -230,3 +293,56 @@ resource "aws_iam_role_policy_attachment" "custom_policies" {
   policy_arn = each.value.policy_arn
 }
 
+# ------------------------------------------------------------------------------
+# CROSS-ACCOUNT INVOCATION ROLE
+# Allows specified roles from other accounts to invoke agents
+# ------------------------------------------------------------------------------
+
+resource "aws_iam_role" "cross_account_invoker" {
+  count = var.cross_account_access.enabled ? 1 : 0
+
+  name = "${var.name_prefix}-cross-account-invoker"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      for account_id, roles in var.cross_account_access.allowed_caller_roles : {
+        Sid    = "AllowAccount${account_id}"
+        Effect = "Allow"
+        Principal = {
+          AWS = [for role in roles : role]
+        }
+        Action = "sts:AssumeRole"
+        Condition = {
+          StringEquals = {
+            "sts:ExternalId" = "agentcore-${var.environment}"
+          }
+        }
+      }
+    ]
+  })
+
+  tags = var.tags
+}
+
+resource "aws_iam_role_policy" "cross_account_invoker" {
+  count = var.cross_account_access.enabled ? 1 : 0
+
+  name = "invoke-agentcore"
+  role = aws_iam_role.cross_account_invoker[0].id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "InvokeAgentCoreRuntime"
+        Effect = "Allow"
+        Action = [
+          "bedrock-agentcore:InvokeAgent",
+          "bedrock-agentcore:InvokeAgentWithResponseStream"
+        ]
+        Resource = "arn:aws:bedrock-agentcore:${var.aws_region}:${var.aws_account_id}:runtime/*"
+      }
+    ]
+  })
+}
