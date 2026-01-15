@@ -67,7 +67,7 @@ resource "aws_bedrockagentcore_agent_runtime_endpoint" "agent" {
   description = "Endpoint for ${each.value.name}"
 
   # Reference the agent runtime
-  agent_runtime_arn = aws_bedrockagentcore_agent_runtime.agent[each.key].arn
+  agent_runtime_id = aws_bedrockagentcore_agent_runtime.agent[each.key].id
 
   tags = each.value.effective_tags
 }
