@@ -1,0 +1,229 @@
+# ==============================================================================
+# DEV ENVIRONMENT CONFIGURATION
+# Amazon Bedrock AgentCore Platform
+# ==============================================================================
+
+environment    = "dev"
+aws_region     = "us-west-2"
+aws_account_id = "574816783000"
+
+# ==============================================================================
+# VPC CONFIGURATION
+# VPC is created externally; subnets, route tables, security groups, and NAT
+# gateways are created by this module within the provided VPC
+# ==============================================================================
+vpc_config = {
+  # Existing VPC ID
+  vpc_id = "vpc-0dba304f96f61c028"
+
+  # VPC CIDR block - used for subnet calculations
+  # NOTE: Ensure this matches the actual VPC CIDR
+  vpc_cidr = "10.65.100.0/22"
+
+  # Availability zones to deploy across (2-3 AZs)
+  availability_zones = ["us-west-2a", "us-west-2b", "us-west-2c"]
+
+  # Set to null to have the module create a new Internet Gateway
+  # Or provide existing IGW ID if the VPC already has one
+  internet_gateway_id = null
+}
+
+# ==============================================================================
+# SCALE PROFILE - Dev (Cost-optimized)
+# ==============================================================================
+scale_profile = {
+  # Network - cost-optimized, single NAT acceptable for dev
+  nat_mode              = "single"
+  vpc_endpoint_az_count = 1
+
+  # Runtime - lower limits for cost savings
+  runtime_concurrency_limit       = 10
+  runtime_memory_mb_default       = 512
+  runtime_timeout_seconds_default = 60
+
+  # Memory - minimal retention for dev
+  memory_session_ttl_hours        = 24
+  memory_long_term_retention_days = 30
+
+  # Gateway - relaxed limits for dev
+  gateway_rate_limit_default  = 1000
+  gateway_burst_limit_default = 100
+
+  # Tools - constrained resources for dev
+  code_interpreter_max_execution_seconds = 30
+  code_interpreter_memory_mb             = 256
+  browser_max_page_size_mb               = 10
+
+  # Observability - shorter retention for dev
+  log_retention_days         = 30
+  metrics_resolution_seconds = 60
+  alarm_evaluation_periods   = 3
+  xray_sampling_rate         = 0.1 # Higher sampling in dev for debugging
+
+  # Feature flags - enable all for testing
+  enable_memory   = true
+  enable_identity = false  # Disabled in dev for simplicity
+  enable_gateway  = true
+  enable_tools    = true
+}
+
+# ==============================================================================
+# AGENT DEFINITIONS
+# ==============================================================================
+agents = {
+  "customer-support" = {
+    name        = "Customer Support Agent"
+    description = "Handles customer inquiries and support requests"
+
+    # Container image from ECR (promoted from Artifactory)
+    container_image_digest = "sha256:cfb868250bd418e18ea15448fabe4865565a7e6b12081cc7dbadfa1462b020d5"
+
+    # Runtime configuration
+    mode = "realtime"
+
+    # IAM capability bundles
+    capability_bundles = [
+      "baseline",
+      "dynamodb_readonly",
+      "bedrock_invoke_model",
+      "agentcore_memory"
+    ]
+
+    # Feature integration
+    memory_enabled  = true
+    gateway_enabled = true
+    tools_enabled   = false
+
+    additional_tags = {
+      Team = "customer-experience"
+    }
+  }
+
+  "data-analyst" = {
+    name        = "Data Analyst Agent"
+    description = "Analyzes data and generates reports"
+
+    container_image_digest = "sha256:cfb868250bd418e18ea15448fabe4865565a7e6b12081cc7dbadfa1462b020d5"
+
+    # Async mode for long-running analysis
+    mode            = "async"
+    timeout_seconds = 3600  # 1 hour for complex analysis
+    memory_mb       = 1024  # More memory for data processing
+
+    capability_bundles = [
+      "baseline",
+      "s3_readwrite",
+      "dynamodb_readonly",
+      "bedrock_invoke_model",
+      "agentcore_memory",
+      "agentcore_tools"
+    ]
+
+    memory_enabled  = true
+    gateway_enabled = true
+    tools_enabled   = true  # Needs Code Interpreter for data analysis
+
+    additional_tags = {
+      Team = "data-engineering"
+    }
+  }
+}
+
+# ==============================================================================
+# MEMORY CONFIGURATION
+# ==============================================================================
+memory_config = {
+  session_memory = {
+    enabled            = true
+    max_context_tokens = 50000  # Smaller context for dev
+  }
+
+  long_term_memory = {
+    enabled            = true
+    encryption_key_arn = null  # Use AWS-managed key in dev
+  }
+}
+
+# ==============================================================================
+# IDENTITY CONFIGURATION (Disabled in dev)
+# ==============================================================================
+identity_config = {
+  enabled       = false
+  provider      = null
+  role_mappings = {}
+}
+
+# ==============================================================================
+# GATEWAY CONFIGURATION
+# ==============================================================================
+gateway_config = {
+  tool_policies = {
+    "weather-api" = {
+      tool_name      = "get_weather"
+      allowed_agents = ["customer-support"]
+      rate_limit = {
+        requests_per_minute = 100
+        burst_limit         = 20
+      }
+      timeout_seconds = 10
+    }
+  }
+
+  connections = {
+    "external-api" = {
+      name         = "External Weather API"
+      endpoint_url = "https://api.weather.example.com"
+      auth_type    = "api_key"
+    }
+  }
+}
+
+# ==============================================================================
+# TOOLS CONFIGURATION
+# ==============================================================================
+tools_config = {
+  code_interpreter = {
+    enabled       = true
+    languages     = ["python"]
+    allow_network = false  # No network access in dev
+  }
+
+  browser_tool = {
+    enabled            = true
+    allowed_domains    = ["docs.example.com", "wiki.example.com"]
+    blocked_domains    = []
+    screenshot_enabled = true
+  }
+}
+
+# ==============================================================================
+# CROSS-ACCOUNT ACCESS (Disabled for dev)
+# ==============================================================================
+cross_account_access = {
+  enabled                 = false
+  allowed_caller_accounts = []
+  allowed_caller_roles    = {}
+  allowed_caller_vpc_ids  = []
+}
+
+# ==============================================================================
+# OBSERVABILITY
+# ==============================================================================
+observability_config = {
+  # Splunk integration disabled for dev (set to true and provide valid values for prod)
+  splunk_enabled              = false
+  splunk_hec_endpoint         = ""
+  splunk_hec_token_secret_arn = ""
+  alarm_sns_topic_arn         = "arn:aws:sns:us-west-2:574816783000:agentcore-dev-alarms"
+  enable_xray_tracing         = true
+  dashboard_enabled           = true
+}
+
+# ==============================================================================
+# TAGS
+# ==============================================================================
+tags = {
+  CostCenter  = "platform-engineering"
+  Application = "agentcore"
+  Owner       = "platform-team"
+}
