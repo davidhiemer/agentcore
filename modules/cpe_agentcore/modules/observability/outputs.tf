@@ -27,12 +27,12 @@ output "alarm_arns" {
 
 output "firehose_arn" {
   description = "ARN of the Kinesis Firehose delivery stream for Splunk"
-  value       = aws_kinesis_firehose_delivery_stream.splunk.arn
+  value       = var.splunk_enabled ? aws_kinesis_firehose_delivery_stream.splunk[0].arn : null
 }
 
 output "firehose_name" {
   description = "Name of the Kinesis Firehose delivery stream for Splunk"
-  value       = aws_kinesis_firehose_delivery_stream.splunk.name
+  value       = var.splunk_enabled ? aws_kinesis_firehose_delivery_stream.splunk[0].name : null
 }
 
 output "xray_group_arn" {
@@ -52,7 +52,7 @@ output "kms_key_arn" {
 
 output "firehose_backup_bucket_arn" {
   description = "S3 bucket ARN for Firehose backup"
-  value       = aws_s3_bucket.firehose_backup.arn
+  value       = var.splunk_enabled ? aws_s3_bucket.firehose_backup[0].arn : null
 }
 
 output "component_log_groups" {

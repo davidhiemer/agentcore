@@ -7,7 +7,7 @@ resource "aws_ecr_repository" "agent" {
   for_each = var.agents
 
   name                 = "${var.name_prefix}/${each.key}"
-  image_tag_mutability = "IMMUTABLE"
+  image_tag_mutability = "MUTABLE"
 
   image_scanning_configuration {
     scan_on_push = true
@@ -56,6 +56,18 @@ resource "aws_kms_key" "ecr" {
           "kms:DescribeKey"
         ]
         Resource = "*"
+      },
+      {
+        Sid    = "Allow Bedrock AgentCore Service"
+        Effect = "Allow"
+        Principal = {
+          Service = "bedrock-agentcore.amazonaws.com"
+        }
+        Action = [
+          "kms:Decrypt",
+          "kms:DescribeKey"
+        ]
+        Resource = "*"
       }
     ]
   })
@@ -63,8 +75,12 @@ resource "aws_kms_key" "ecr" {
   tags = var.tags
 }
 
+resource "random_id" "ecr_key_suffix" {
+  byte_length = 4
+}
+
 resource "aws_kms_alias" "ecr" {
-  name          = "alias/${var.name_prefix}-ecr"
+  name          = "alias/${var.name_prefix}-ecr-${random_id.ecr_key_suffix.hex}"
   target_key_id = aws_kms_key.ecr.key_id
 }
 
@@ -91,26 +107,47 @@ resource "aws_ecr_lifecycle_policy" "agent" {
   })
 }
 
-# Repository policy for cross-account access (if enabled)
+# Repository policy for Bedrock AgentCore service access
 resource "aws_ecr_repository_policy" "agent" {
-  for_each   = var.cross_account_access.enabled ? var.agents : {}
+  for_each   = var.agents
   repository = aws_ecr_repository.agent[each.key].name
 
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [
-      {
-        Sid    = "AllowCrossAccountPull"
-        Effect = "Allow"
-        Principal = {
-          AWS = [for account in var.cross_account_access.allowed_caller_accounts : "arn:aws:iam::${account}:root"]
+    Statement = concat(
+      [
+        {
+          Sid    = "AllowBedrockAgentCorePull"
+          Effect = "Allow"
+          Principal = {
+            Service = "bedrock-agentcore.amazonaws.com"
+          }
+          Action = [
+            "ecr:BatchGetImage",
+            "ecr:GetDownloadUrlForLayer",
+            "ecr:BatchCheckLayerAvailability"
+          ]
+          Condition = {
+            StringEquals = {
+              "aws:SourceAccount" = data.aws_caller_identity.current.account_id
+            }
+          }
         }
-        Action = [
-          "ecr:BatchGetImage",
-          "ecr:GetDownloadUrlForLayer"
-        ]
-      }
-    ]
+      ],
+      var.cross_account_access.enabled ? [
+        {
+          Sid    = "AllowCrossAccountPull"
+          Effect = "Allow"
+          Principal = {
+            AWS = [for account in var.cross_account_access.allowed_caller_accounts : "arn:aws:iam::${account}:root"]
+          }
+          Action = [
+            "ecr:BatchGetImage",
+            "ecr:GetDownloadUrlForLayer"
+          ]
+        }
+      ] : []
+    )
   })
 }
 

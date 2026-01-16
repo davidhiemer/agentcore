@@ -19,6 +19,26 @@ output "ecr_repository_arns" {
 # ------------------------------------------------------------------------------
 # NETWORK
 # ------------------------------------------------------------------------------
+output "private_subnet_ids" {
+  description = "Map of AZ to private subnet ID (created by this module)"
+  value       = module.network.private_subnet_ids
+}
+
+output "public_subnet_ids" {
+  description = "Map of AZ to public subnet ID (created by this module)"
+  value       = module.network.public_subnet_ids
+}
+
+output "security_group_ids" {
+  description = "Map of security group purpose to ID (created by this module)"
+  value       = module.network.security_group_ids
+}
+
+output "private_route_table_ids" {
+  description = "Map of AZ to private route table ID (created by this module)"
+  value       = module.network.private_route_table_ids
+}
+
 output "vpc_endpoint_ids" {
   description = "Map of service to VPC endpoint ID"
   value       = module.network.vpc_endpoint_ids
@@ -37,6 +57,11 @@ output "nat_gateway_ids" {
 output "nat_gateway_public_ips" {
   description = "Map of AZ to NAT Gateway public IP"
   value       = module.network.nat_gateway_public_ips
+}
+
+output "internet_gateway_id" {
+  description = "Internet Gateway ID (created or provided)"
+  value       = module.network.internet_gateway_id
 }
 
 # ------------------------------------------------------------------------------

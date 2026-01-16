@@ -1,0 +1,2 @@
+.\build-and-push.ps1 -AccountId 574816783000 -Region us-west-2 -AgentName customer-support
+.\build-and-push.ps1 -AccountId 574816783000 -Region us-west-2 -AgentName data-analyst

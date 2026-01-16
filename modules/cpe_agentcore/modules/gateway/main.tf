@@ -5,6 +5,40 @@
 # ==============================================================================
 
 data "aws_caller_identity" "current" {}
+data "aws_region" "current" {}
+
+# ------------------------------------------------------------------------------
+# API GATEWAY CLOUDWATCH LOGGING
+# Required for access/execution logging on API Gateway stages
+# ------------------------------------------------------------------------------
+
+resource "aws_iam_role" "api_gateway_cloudwatch" {
+  name = "${var.name_prefix}-api-gw-cloudwatch"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Action = "sts:AssumeRole"
+      Effect = "Allow"
+      Principal = {
+        Service = "apigateway.amazonaws.com"
+      }
+    }]
+  })
+
+  tags = var.tags
+}
+
+resource "aws_iam_role_policy_attachment" "api_gateway_cloudwatch" {
+  role       = aws_iam_role.api_gateway_cloudwatch.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonAPIGatewayPushToCloudWatchLogs"
+}
+
+resource "aws_api_gateway_account" "this" {
+  cloudwatch_role_arn = aws_iam_role.api_gateway_cloudwatch.arn
+
+  depends_on = [aws_iam_role_policy_attachment.api_gateway_cloudwatch]
+}
 
 # ------------------------------------------------------------------------------
 # TOOL REGISTRY (DynamoDB)
@@ -46,11 +80,16 @@ resource "aws_dynamodb_table" "tool_registry" {
 # Stores connection credentials securely
 # ------------------------------------------------------------------------------
 
+resource "random_id" "secret_suffix" {
+  byte_length = 4
+}
+
 resource "aws_secretsmanager_secret" "connections" {
   for_each = var.gateway_config.connections
 
-  name        = "${var.name_prefix}/gateway/connections/${each.key}"
-  description = "Connection credentials for ${each.value.name}"
+  name                    = "${var.name_prefix}/gateway/connections/${each.key}-${random_id.secret_suffix.hex}"
+  description             = "Connection credentials for ${each.value.name}"
+  recovery_window_in_days = 0 # Allow immediate deletion for dev/test
 
   tags = merge(var.tags, {
     Purpose    = "AgentCore Gateway connection"
@@ -93,6 +132,41 @@ resource "aws_api_gateway_method" "tool_invoke" {
   authorization = "AWS_IAM"
 }
 
+# Integration for tool invoke method
+resource "aws_api_gateway_integration" "tool_invoke" {
+  rest_api_id             = aws_api_gateway_rest_api.gateway.id
+  resource_id             = aws_api_gateway_resource.tool_invoke.id
+  http_method             = aws_api_gateway_method.tool_invoke.http_method
+  type                    = "MOCK"
+  request_templates = {
+    "application/json" = jsonencode({
+      statusCode = 200
+    })
+  }
+}
+
+resource "aws_api_gateway_method_response" "tool_invoke" {
+  rest_api_id = aws_api_gateway_rest_api.gateway.id
+  resource_id = aws_api_gateway_resource.tool_invoke.id
+  http_method = aws_api_gateway_method.tool_invoke.http_method
+  status_code = "200"
+
+  response_models = {
+    "application/json" = "Empty"
+  }
+}
+
+resource "aws_api_gateway_integration_response" "tool_invoke" {
+  rest_api_id = aws_api_gateway_rest_api.gateway.id
+  resource_id = aws_api_gateway_resource.tool_invoke.id
+  http_method = aws_api_gateway_method.tool_invoke.http_method
+  status_code = aws_api_gateway_method_response.tool_invoke.status_code
+
+  response_templates = {
+    "application/json" = ""
+  }
+}
+
 # ------------------------------------------------------------------------------
 # USAGE PLANS FOR RATE LIMITING
 # Per-agent rate limiting configuration
@@ -130,8 +204,14 @@ resource "aws_api_gateway_deployment" "gateway" {
       aws_api_gateway_resource.tools.id,
       aws_api_gateway_resource.tool_invoke.id,
       aws_api_gateway_method.tool_invoke.id,
+      aws_api_gateway_integration.tool_invoke.id,
     ]))
   }
+
+  depends_on = [
+    aws_api_gateway_integration.tool_invoke,
+    aws_api_gateway_integration_response.tool_invoke
+  ]
 
   lifecycle {
     create_before_destroy = true
@@ -163,6 +243,8 @@ resource "aws_api_gateway_stage" "gateway" {
   xray_tracing_enabled = true
 
   tags = var.tags
+
+  depends_on = [aws_api_gateway_account.this]
 }
 
 resource "aws_cloudwatch_log_group" "gateway_access" {

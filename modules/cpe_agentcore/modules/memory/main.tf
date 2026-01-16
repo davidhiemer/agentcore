@@ -279,6 +279,7 @@ resource "aws_ssm_parameter" "memory_config" {
   name        = "/${var.name_prefix}/memory/config"
   description = "AgentCore Memory configuration"
   type        = "String"
+  overwrite   = true
 
   value = jsonencode({
     session_memory = {

@@ -802,3 +802,4 @@ resource "aws_s3_bucket_lifecycle_configuration" "audit_evidence" {
 - **Why not CloudWatch/CloudTrail alone**: Harder to query; log retention limits; not optimized for structured evidence
 
 
+

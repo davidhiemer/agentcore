@@ -53,8 +53,12 @@ resource "aws_kms_key" "logs" {
   tags = var.tags
 }
 
+resource "random_id" "logs_key_suffix" {
+  byte_length = 4
+}
+
 resource "aws_kms_alias" "logs" {
-  name          = "alias/${var.name_prefix}-logs"
+  name          = "alias/${var.name_prefix}-logs-${random_id.logs_key_suffix.hex}"
   target_key_id = aws_kms_key.logs.key_id
 }
 
@@ -164,14 +168,10 @@ resource "aws_cloudwatch_log_metric_filter" "errors" {
   pattern        = "{ $.level = \"ERROR\" }"
 
   metric_transformation {
-    name          = "ErrorCount"
-    namespace     = "AgentCore/${var.environment}"
-    value         = "1"
-    default_value = "0"
-    dimensions = {
-      AgentName = each.value.name
-      AgentMode = each.value.mode
-    }
+    name      = "${each.key}-ErrorCount"
+    namespace = "AgentCore/${var.environment}"
+    value     = "1"
+    unit      = "Count"
   }
 }
 
@@ -183,14 +183,10 @@ resource "aws_cloudwatch_log_metric_filter" "invocations" {
   pattern        = "{ $.eventType = \"INVOCATION_START\" }"
 
   metric_transformation {
-    name          = "InvocationCount"
-    namespace     = "AgentCore/${var.environment}"
-    value         = "1"
-    default_value = "0"
-    dimensions = {
-      AgentName = each.value.name
-      AgentMode = each.value.mode
-    }
+    name      = "${each.key}-InvocationCount"
+    namespace = "AgentCore/${var.environment}"
+    value     = "1"
+    unit      = "Count"
   }
 }
 
@@ -202,13 +198,10 @@ resource "aws_cloudwatch_log_metric_filter" "latency" {
   pattern        = "{ $.eventType = \"INVOCATION_COMPLETE\" && $.durationMs >= 0 }"
 
   metric_transformation {
-    name          = "InvocationLatency"
-    namespace     = "AgentCore/${var.environment}"
-    value         = "$.durationMs"
-    default_value = "0"
-    dimensions = {
-      AgentName = each.value.name
-    }
+    name      = "${each.key}-InvocationLatency"
+    namespace = "AgentCore/${var.environment}"
+    value     = "$.durationMs"
+    unit      = "Milliseconds"
   }
 }
 
@@ -327,24 +320,28 @@ resource "aws_cloudwatch_metric_alarm" "gateway_5xx_errors" {
 
 # ------------------------------------------------------------------------------
 # SPLUNK FORWARDING (Kinesis Firehose)
+# Only created when splunk_enabled = true
 # ------------------------------------------------------------------------------
 
 # S3 bucket for failed deliveries
 resource "aws_s3_bucket" "firehose_backup" {
+  count  = var.splunk_enabled ? 1 : 0
   bucket = "${var.name_prefix}-firehose-backup-${data.aws_caller_identity.current.account_id}"
 
   tags = var.tags
 }
 
 resource "aws_s3_bucket_versioning" "firehose_backup" {
-  bucket = aws_s3_bucket.firehose_backup.id
+  count  = var.splunk_enabled ? 1 : 0
+  bucket = aws_s3_bucket.firehose_backup[0].id
   versioning_configuration {
     status = "Enabled"
   }
 }
 
 resource "aws_s3_bucket_server_side_encryption_configuration" "firehose_backup" {
-  bucket = aws_s3_bucket.firehose_backup.id
+  count  = var.splunk_enabled ? 1 : 0
+  bucket = aws_s3_bucket.firehose_backup[0].id
 
   rule {
     apply_server_side_encryption_by_default {
@@ -354,7 +351,8 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "firehose_backup" 
 }
 
 resource "aws_s3_bucket_public_access_block" "firehose_backup" {
-  bucket = aws_s3_bucket.firehose_backup.id
+  count  = var.splunk_enabled ? 1 : 0
+  bucket = aws_s3_bucket.firehose_backup[0].id
 
   block_public_acls       = true
   block_public_policy     = true
@@ -364,7 +362,8 @@ resource "aws_s3_bucket_public_access_block" "firehose_backup" {
 
 # IAM role for Firehose
 resource "aws_iam_role" "firehose" {
-  name = "${var.name_prefix}-firehose-role"
+  count = var.splunk_enabled ? 1 : 0
+  name  = "${var.name_prefix}-firehose-role"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -383,8 +382,9 @@ resource "aws_iam_role" "firehose" {
 }
 
 resource "aws_iam_role_policy" "firehose" {
-  name = "firehose-policy"
-  role = aws_iam_role.firehose.id
+  count = var.splunk_enabled ? 1 : 0
+  name  = "firehose-policy"
+  role  = aws_iam_role.firehose[0].id
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -397,8 +397,8 @@ resource "aws_iam_role_policy" "firehose" {
           "s3:ListBucket"
         ]
         Resource = [
-          aws_s3_bucket.firehose_backup.arn,
-          "${aws_s3_bucket.firehose_backup.arn}/*"
+          aws_s3_bucket.firehose_backup[0].arn,
+          "${aws_s3_bucket.firehose_backup[0].arn}/*"
         ]
       },
       {
@@ -414,24 +414,26 @@ resource "aws_iam_role_policy" "firehose" {
 
 # Retrieve Splunk HEC token
 data "aws_secretsmanager_secret_version" "splunk_token" {
+  count     = var.splunk_enabled ? 1 : 0
   secret_id = var.splunk_hec_token_secret_arn
 }
 
 # Kinesis Firehose delivery stream
 resource "aws_kinesis_firehose_delivery_stream" "splunk" {
+  count       = var.splunk_enabled ? 1 : 0
   name        = "${var.name_prefix}-splunk-forwarder"
   destination = "splunk"
 
   splunk_configuration {
     hec_endpoint               = var.splunk_hec_endpoint
-    hec_token                  = data.aws_secretsmanager_secret_version.splunk_token.secret_string
+    hec_token                  = data.aws_secretsmanager_secret_version.splunk_token[0].secret_string
     hec_acknowledgment_timeout = 300
     retry_duration             = 3600
     s3_backup_mode             = "FailedEventsOnly"
 
     s3_configuration {
-      role_arn           = aws_iam_role.firehose.arn
-      bucket_arn         = aws_s3_bucket.firehose_backup.arn
+      role_arn           = aws_iam_role.firehose[0].arn
+      bucket_arn         = aws_s3_bucket.firehose_backup[0].arn
       prefix             = "splunk-failed/"
       compression_format = "GZIP"
     }
@@ -442,7 +444,8 @@ resource "aws_kinesis_firehose_delivery_stream" "splunk" {
 
 # IAM role for CloudWatch to Firehose
 resource "aws_iam_role" "cloudwatch_to_firehose" {
-  name = "${var.name_prefix}-cw-to-firehose"
+  count = var.splunk_enabled ? 1 : 0
+  name  = "${var.name_prefix}-cw-to-firehose"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -461,8 +464,9 @@ resource "aws_iam_role" "cloudwatch_to_firehose" {
 }
 
 resource "aws_iam_role_policy" "cloudwatch_to_firehose" {
-  name = "cloudwatch-to-firehose-policy"
-  role = aws_iam_role.cloudwatch_to_firehose.id
+  count = var.splunk_enabled ? 1 : 0
+  name  = "cloudwatch-to-firehose-policy"
+  role  = aws_iam_role.cloudwatch_to_firehose[0].id
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -473,7 +477,7 @@ resource "aws_iam_role_policy" "cloudwatch_to_firehose" {
           "firehose:PutRecord",
           "firehose:PutRecordBatch"
         ]
-        Resource = aws_kinesis_firehose_delivery_stream.splunk.arn
+        Resource = aws_kinesis_firehose_delivery_stream.splunk[0].arn
       }
     ]
   })
@@ -481,13 +485,13 @@ resource "aws_iam_role_policy" "cloudwatch_to_firehose" {
 
 # Subscription filters for log forwarding
 resource "aws_cloudwatch_log_subscription_filter" "splunk" {
-  for_each = var.agents
+  for_each = var.splunk_enabled ? var.agents : {}
 
   name            = "${var.name_prefix}-${each.key}-splunk"
   log_group_name  = aws_cloudwatch_log_group.agent[each.key].name
   filter_pattern  = ""
-  destination_arn = aws_kinesis_firehose_delivery_stream.splunk.arn
-  role_arn        = aws_iam_role.cloudwatch_to_firehose.arn
+  destination_arn = aws_kinesis_firehose_delivery_stream.splunk[0].arn
+  role_arn        = aws_iam_role.cloudwatch_to_firehose[0].arn
 }
 
 # ------------------------------------------------------------------------------

@@ -612,3 +612,4 @@ output "private_hosted_zone_name" {
 - **Why not interface endpoints**: Unnecessary cost; lower throughput; no benefit for S3/DynamoDB
 
 
+

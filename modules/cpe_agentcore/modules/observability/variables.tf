@@ -58,14 +58,22 @@ variable "xray_sampling_rate" {
   default     = 0.05
 }
 
+variable "splunk_enabled" {
+  description = "Whether to enable Splunk log forwarding"
+  type        = bool
+  default     = false
+}
+
 variable "splunk_hec_endpoint" {
   description = "Splunk HEC endpoint URL"
   type        = string
+  default     = ""
 }
 
 variable "splunk_hec_token_secret_arn" {
   description = "ARN of Secrets Manager secret containing Splunk HEC token"
   type        = string
+  default     = ""
 }
 
 variable "alarm_sns_topic_arn" {

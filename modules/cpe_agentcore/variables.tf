@@ -33,25 +33,21 @@ variable "aws_account_id" {
 }
 
 # ==============================================================================
-# VPC INPUTS (Created externally)
+# VPC INPUTS (VPC created externally, all other networking created in this module)
 # ==============================================================================
 
 variable "vpc_config" {
-  description = "VPC configuration - VPC is created outside this module"
+  description = "VPC configuration - VPC is created outside this module, subnets/routes/security groups created internally"
   type = object({
-    vpc_id = string
-    private_subnet_ids = map(object({
-      subnet_id         = string
-      availability_zone = string
-      cidr_block        = string
-    }))
-    public_subnet_ids = optional(map(string), {})
-    security_group_ids = object({
-      agentcore_runtime  = string
-      vpc_endpoints      = string
-      nat_gateway_egress = string
-    })
-    route_table_ids = map(string)
+    vpc_id   = string
+    vpc_cidr = string
+
+    # Availability zones to deploy resources across
+    availability_zones = list(string)
+
+    # Optional: existing Internet Gateway ID (if VPC already has one)
+    # If not provided, module will create one
+    internet_gateway_id = optional(string, null)
   })
 
   validation {
@@ -60,8 +56,18 @@ variable "vpc_config" {
   }
 
   validation {
-    condition     = length(var.vpc_config.private_subnet_ids) >= 2
-    error_message = "At least 2 private subnets across different AZs are required."
+    condition     = can(cidrhost(var.vpc_config.vpc_cidr, 0))
+    error_message = "VPC CIDR must be a valid CIDR block (e.g., 10.0.0.0/16)."
+  }
+
+  validation {
+    condition     = length(var.vpc_config.availability_zones) >= 2
+    error_message = "At least 2 availability zones are required for high availability."
+  }
+
+  validation {
+    condition     = length(var.vpc_config.availability_zones) <= 3
+    error_message = "Maximum of 3 availability zones supported."
   }
 }
 
@@ -493,21 +499,22 @@ variable "cross_account_access" {
 variable "observability_config" {
   description = "Observability and monitoring configuration"
   type = object({
-    splunk_hec_endpoint         = string
-    splunk_hec_token_secret_arn = string
+    splunk_enabled              = optional(bool, false)
+    splunk_hec_endpoint         = optional(string, "")
+    splunk_hec_token_secret_arn = optional(string, "")
     alarm_sns_topic_arn         = string
     enable_xray_tracing         = bool
     dashboard_enabled           = bool
   })
 
   validation {
-    condition     = can(regex("^https://", var.observability_config.splunk_hec_endpoint))
-    error_message = "Splunk HEC endpoint must be an HTTPS URL."
+    condition     = !var.observability_config.splunk_enabled || can(regex("^https://", var.observability_config.splunk_hec_endpoint))
+    error_message = "When Splunk is enabled, HEC endpoint must be an HTTPS URL."
   }
 
   validation {
-    condition     = can(regex("^arn:aws:secretsmanager:", var.observability_config.splunk_hec_token_secret_arn))
-    error_message = "Splunk HEC token must be stored in Secrets Manager."
+    condition     = !var.observability_config.splunk_enabled || can(regex("^arn:aws:secretsmanager:", var.observability_config.splunk_hec_token_secret_arn))
+    error_message = "When Splunk is enabled, HEC token must be stored in Secrets Manager."
   }
 
   validation {

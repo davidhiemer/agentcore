@@ -1020,3 +1020,4 @@ output "firehose_arn" {
 - **Why not default encryption**: Less control; no key usage audit; may not meet compliance requirements
 
 
+

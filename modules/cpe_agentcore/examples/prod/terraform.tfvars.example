@@ -8,46 +8,23 @@ aws_region     = "us-east-1"
 aws_account_id = "333333333333"
 
 # ==============================================================================
-# VPC CONFIGURATION (Created externally)
+# VPC CONFIGURATION
+# VPC is created externally; subnets, route tables, security groups, and NAT
+# gateways are created by this module within the provided VPC
 # ==============================================================================
 vpc_config = {
+  # Existing VPC ID
   vpc_id = "vpc-prod12345"
 
-  private_subnet_ids = {
-    "us-east-1a" = {
-      subnet_id         = "subnet-prod-private-1a"
-      availability_zone = "us-east-1a"
-      cidr_block        = "10.2.1.0/24"
-    }
-    "us-east-1b" = {
-      subnet_id         = "subnet-prod-private-1b"
-      availability_zone = "us-east-1b"
-      cidr_block        = "10.2.2.0/24"
-    }
-    "us-east-1c" = {
-      subnet_id         = "subnet-prod-private-1c"
-      availability_zone = "us-east-1c"
-      cidr_block        = "10.2.3.0/24"
-    }
-  }
+  # VPC CIDR block - used for subnet calculations
+  vpc_cidr = "10.2.0.0/16"
 
-  public_subnet_ids = {
-    "us-east-1a" = "subnet-prod-public-1a"
-    "us-east-1b" = "subnet-prod-public-1b"
-    "us-east-1c" = "subnet-prod-public-1c"
-  }
+  # Availability zones to deploy across (3 AZs for production HA)
+  availability_zones = ["us-east-1a", "us-east-1b", "us-east-1c"]
 
-  security_group_ids = {
-    agentcore_runtime  = "sg-prod-runtime"
-    vpc_endpoints      = "sg-prod-vpce"
-    nat_gateway_egress = "sg-prod-nat"
-  }
-
-  route_table_ids = {
-    "us-east-1a" = "rtb-prod-private-1a"
-    "us-east-1b" = "rtb-prod-private-1b"
-    "us-east-1c" = "rtb-prod-private-1c"
-  }
+  # Optional: existing Internet Gateway ID (if VPC already has one)
+  # Set to null to have the module create a new IGW
+  internet_gateway_id = "igw-prod12345"
 }
 
 # ==============================================================================

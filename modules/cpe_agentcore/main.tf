@@ -30,7 +30,8 @@ module "ecr" {
 
 # ------------------------------------------------------------------------------
 # NETWORK INFRASTRUCTURE
-# VPC endpoints and private DNS configuration
+# Creates all networking resources within the provided VPC:
+# subnets, route tables, NAT gateways, security groups, VPC endpoints
 # Depends on: (none - VPC created externally)
 # ------------------------------------------------------------------------------
 module "network" {
@@ -40,21 +41,15 @@ module "network" {
   name_prefix = local.name_prefix
   aws_region  = var.aws_region
 
-  # VPC configuration (passed through from external)
-  vpc_id             = var.vpc_config.vpc_id
-  private_subnet_ids = var.vpc_config.private_subnet_ids
-  public_subnet_ids  = var.vpc_config.public_subnet_ids
-  security_group_ids = var.vpc_config.security_group_ids
-  route_table_ids    = var.vpc_config.route_table_ids
-
-  # Normalized values from locals
-  availability_zones      = local.availability_zones
-  subnets_by_az           = local.subnets_by_az
-  vpc_endpoint_subnet_ids = local.vpc_endpoint_subnet_ids
+  # VPC configuration - VPC provided externally, everything else created here
+  vpc_id              = var.vpc_config.vpc_id
+  vpc_cidr            = var.vpc_config.vpc_cidr
+  availability_zones  = var.vpc_config.availability_zones
+  internet_gateway_id = var.vpc_config.internet_gateway_id
 
   # Scale profile
-  nat_mode        = var.scale_profile.nat_mode
-  nat_gateway_azs = local.nat_gateway_azs
+  nat_mode              = var.scale_profile.nat_mode
+  vpc_endpoint_az_count = var.scale_profile.vpc_endpoint_az_count
 
   # VPC endpoints
   gateway_endpoints   = local.required_gateway_endpoints
@@ -137,10 +132,10 @@ module "runtime" {
   # Agent configurations
   agents = local.agents_normalized
 
-  # VPC attachment
+  # VPC attachment - using network module outputs
   vpc_id            = var.vpc_config.vpc_id
-  subnet_ids        = local.subnet_ids_list
-  security_group_id = var.vpc_config.security_group_ids.agentcore_runtime
+  subnet_ids        = module.network.private_subnet_ids_list
+  security_group_id = module.network.agentcore_runtime_security_group_id
 
   # Dependencies
   ecr_repository_urls = module.ecr.repository_urls
@@ -182,7 +177,7 @@ module "endpoints" {
 # ------------------------------------------------------------------------------
 # AGENTCORE MEMORY
 # Session and long-term memory for agents
-# Depends on: iam, runtime
+# Depends on: iam, runtime, network
 # ------------------------------------------------------------------------------
 module "memory" {
   source = "./modules/memory"
@@ -198,9 +193,9 @@ module "memory" {
   # Agent configurations
   agents = local.agents_normalized
 
-  # VPC attachment
+  # VPC attachment - using network module outputs
   vpc_id     = var.vpc_config.vpc_id
-  subnet_ids = local.subnet_ids_list
+  subnet_ids = module.network.private_subnet_ids_list
 
   # Dependencies
   execution_role_arns = module.iam.execution_role_arns
@@ -212,7 +207,7 @@ module "memory" {
 # ------------------------------------------------------------------------------
 # AGENTCORE GATEWAY
 # Tool governance and connectivity
-# Depends on: iam, runtime
+# Depends on: iam, runtime, network
 # ------------------------------------------------------------------------------
 module "gateway" {
   source = "./modules/gateway"
@@ -228,9 +223,9 @@ module "gateway" {
   # Agent configurations
   agents = local.agents_normalized
 
-  # VPC attachment
+  # VPC attachment - using network module outputs
   vpc_id     = var.vpc_config.vpc_id
-  subnet_ids = local.subnet_ids_list
+  subnet_ids = module.network.private_subnet_ids_list
 
   # Dependencies
   execution_role_arns = module.iam.execution_role_arns
@@ -242,7 +237,7 @@ module "gateway" {
 # ------------------------------------------------------------------------------
 # AGENTCORE TOOLS
 # Code Interpreter and Browser Tool
-# Depends on: iam, runtime, gateway
+# Depends on: iam, runtime, gateway, network
 # ------------------------------------------------------------------------------
 module "tools" {
   source = "./modules/tools"
@@ -258,9 +253,9 @@ module "tools" {
   # Agent configurations
   agents = local.agents_normalized
 
-  # VPC attachment
+  # VPC attachment - using network module outputs
   vpc_id     = var.vpc_config.vpc_id
-  subnet_ids = local.subnet_ids_list
+  subnet_ids = module.network.private_subnet_ids_list
 
   # Dependencies
   execution_role_arns = module.iam.execution_role_arns
@@ -292,7 +287,8 @@ module "observability" {
   alarm_evaluation_periods   = var.scale_profile.alarm_evaluation_periods
   xray_sampling_rate         = var.scale_profile.xray_sampling_rate
 
-  # Splunk integration
+  # Splunk integration (optional)
+  splunk_enabled              = var.observability_config.splunk_enabled
   splunk_hec_endpoint         = var.observability_config.splunk_hec_endpoint
   splunk_hec_token_secret_arn = var.observability_config.splunk_hec_token_secret_arn
 

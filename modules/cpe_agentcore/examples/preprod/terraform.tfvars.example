@@ -8,46 +8,23 @@ aws_region     = "us-east-1"
 aws_account_id = "222222222222"
 
 # ==============================================================================
-# VPC CONFIGURATION (Created externally)
+# VPC CONFIGURATION
+# VPC is created externally; subnets, route tables, security groups, and NAT
+# gateways are created by this module within the provided VPC
 # ==============================================================================
 vpc_config = {
+  # Existing VPC ID
   vpc_id = "vpc-preprod12345"
 
-  private_subnet_ids = {
-    "us-east-1a" = {
-      subnet_id         = "subnet-preprod-private-1a"
-      availability_zone = "us-east-1a"
-      cidr_block        = "10.1.1.0/24"
-    }
-    "us-east-1b" = {
-      subnet_id         = "subnet-preprod-private-1b"
-      availability_zone = "us-east-1b"
-      cidr_block        = "10.1.2.0/24"
-    }
-    "us-east-1c" = {
-      subnet_id         = "subnet-preprod-private-1c"
-      availability_zone = "us-east-1c"
-      cidr_block        = "10.1.3.0/24"
-    }
-  }
+  # VPC CIDR block - used for subnet calculations
+  vpc_cidr = "10.1.0.0/16"
 
-  public_subnet_ids = {
-    "us-east-1a" = "subnet-preprod-public-1a"
-    "us-east-1b" = "subnet-preprod-public-1b"
-    "us-east-1c" = "subnet-preprod-public-1c"
-  }
+  # Availability zones to deploy across (2-3 AZs)
+  availability_zones = ["us-east-1a", "us-east-1b", "us-east-1c"]
 
-  security_group_ids = {
-    agentcore_runtime  = "sg-preprod-runtime"
-    vpc_endpoints      = "sg-preprod-vpce"
-    nat_gateway_egress = "sg-preprod-nat"
-  }
-
-  route_table_ids = {
-    "us-east-1a" = "rtb-preprod-private-1a"
-    "us-east-1b" = "rtb-preprod-private-1b"
-    "us-east-1c" = "rtb-preprod-private-1c"
-  }
+  # Optional: existing Internet Gateway ID (if VPC already has one)
+  # Set to null to have the module create a new IGW
+  internet_gateway_id = "igw-preprod12345"
 }
 
 # ==============================================================================

@@ -2,7 +2,7 @@ locals {
   # ==============================================================================
   # NAMING CONVENTIONS
   # ==============================================================================
-  name_prefix = "agentcore-${var.environment}"
+  name_prefix = "agentcore-v2-${var.environment}"
 
   # ==============================================================================
   # COMMON TAGS (Applied to all resources)
@@ -20,30 +20,10 @@ locals {
   )
 
   # ==============================================================================
-  # VPC NORMALIZATION
+  # VPC CONFIGURATION (Simplified - networking created in network module)
   # ==============================================================================
-  availability_zones = distinct([
-    for subnet in var.vpc_config.private_subnet_ids : subnet.availability_zone
-  ])
-
-  az_count = length(local.availability_zones)
-
-  # Normalize subnet list for iteration
-  subnets_by_az = {
-    for az in local.availability_zones : az => [
-      for k, v in var.vpc_config.private_subnet_ids : v.subnet_id
-      if v.availability_zone == az
-    ][0]
-  }
-
-  subnet_ids_list = [for az, subnet_id in local.subnets_by_az : subnet_id]
-
-  # ==============================================================================
-  # NAT GATEWAY LOGIC
-  # ==============================================================================
-  nat_gateway_count = var.scale_profile.nat_mode == "per_az" ? local.az_count : 1
-
-  nat_gateway_azs = var.scale_profile.nat_mode == "per_az" ? local.availability_zones : [local.availability_zones[0]]
+  availability_zones = var.vpc_config.availability_zones
+  az_count           = length(local.availability_zones)
 
   # ==============================================================================
   # VPC ENDPOINTS CONFIGURATION
@@ -52,12 +32,9 @@ locals {
   required_gateway_endpoints = toset(["s3", "dynamodb"])
 
   # Interface endpoints for AgentCore and AWS services
+  # NOTE: bedrock-agentcore endpoints removed - they conflict with private hosted zones
+  # and bedrock-agentcore-runtime service doesn't exist yet in all regions
   required_interface_endpoints = toset(concat(
-    # AgentCore-specific endpoints
-    [
-      "bedrock-agentcore",         # AgentCore control plane
-      "bedrock-agentcore-runtime", # AgentCore runtime invocation
-    ],
     # Bedrock endpoints (for model invocation)
     [
       "bedrock-runtime",
@@ -78,13 +55,6 @@ locals {
       "execute-api", # For API Gateway if used
     ]
   ))
-
-  # Limit interface endpoints to configured AZ count for cost optimization
-  vpc_endpoint_subnet_ids = slice(
-    [for az in local.availability_zones : local.subnets_by_az[az]],
-    0,
-    min(var.scale_profile.vpc_endpoint_az_count, local.az_count)
-  )
 
   # ==============================================================================
   # FEATURE FLAGS
